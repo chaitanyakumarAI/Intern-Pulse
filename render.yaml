@@ -1,0 +1,25 @@
+services:
+  - type: worker
+    name: ai-job-tracker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scheduler.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: NOTION_API_KEY
+        sync: false
+      - key: NOTION_DATABASE_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: GMAIL_CREDENTIALS_JSON
+        sync: false
+      - key: GMAIL_TOKEN_JSON
+        sync: false
