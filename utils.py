@@ -124,19 +124,15 @@ def is_job_related(subject: str, body: str, sender: str) -> bool:
     """
     haystack = " ".join([subject, body[:500], sender]).lower()
     
-    # 1. Reject strict spam/newsletter keywords
+    # 1. Reject strict spam/newsletter keywords (Non-job related)
     rejections = [
-        "newsletter", "digest", "recommended jobs", "jobs for you", 
-        "promotional", "unsubscribe", "marketing", "advertisement",
-        "internships you might like", "jobs you might like",
-        "new jobs matching your profile", "weekly updates",
-        "courses", "masterclass", "webinar", "buy now",
-        "internships posted", "hackathons", "@unstop.news"
+        "promotional", "marketing", "advertisement",
+        "courses", "masterclass", "webinar", "buy now", "buy course"
     ]
     
     # Check subject and sender first for strong rejection signals
     subj_sender = f"{subject} {sender}".lower()
-    if any(rej in subj_sender for rej in ["digest", "newsletter", "recommended", "matching your", "jobs for you", "weekly", "hackathons", "@unstop.news", "internships posted"]):
+    if any(rej in subj_sender for rej in rejections):
         return False
         
     # 2. Must contain job keywords

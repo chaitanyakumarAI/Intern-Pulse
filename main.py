@@ -155,7 +155,19 @@ def run_once() -> dict:
         classification["risk_notes"] = analysis["risk_notes"]
         classification["prep_sheet"] = analysis["prep_sheet"]
             
-        # c) Notion upsert
+        # c) Handle "Job Opportunity" digests specifically
+        if status == "Job Opportunity":
+            logger.info("  -> Found a new Job Opportunity: %s at %s. Sending Telegram alert but skipping Notion.", role, company)
+            try:
+                from telegram_notifier import notify_status_change
+                notify_status_change(email, classification, action="opportunity")
+            except Exception as e:
+                logger.error("Failed to send Job Opportunity Telegram alert: %s", e)
+            stats["skipped"] += 1
+            newly_processed_ids.append(gmail_id)
+            continue
+            
+        # d) Notion upsert (for actual applications)
         if notion_available:
             try:
                 result = upsert_application(email, classification)
@@ -169,7 +181,7 @@ def run_once() -> dict:
                 else:
                     stats["skipped"] += 1
 
-                # c) Telegram alert on status change
+                # e) Notifications (for actual applications)
                 if status_changed and action in ("created", "updated"):
                     try:
                         notify_status_change(email, classification, action)

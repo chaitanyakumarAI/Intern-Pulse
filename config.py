@@ -95,7 +95,7 @@ STATUS_LABELS = [
 ]
 
 # ── Statuses that should trigger Telegram alerts ─────────────────────────────
-NOTIFY_STATUSES = {"OA Sent", "Interview Scheduled", "Rejected", "Offer"}
+NOTIFY_STATUSES = {"Applied", "OA Sent", "Interview Scheduled", "Rejected", "Offer", "Job Opportunity"}
 
 
 def validate_env(required: list[str]) -> None:

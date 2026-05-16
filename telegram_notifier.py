@@ -82,6 +82,9 @@ def notify_status_change(
     
     if action == "created":
         action_line = "🆕 <b>New application tracked</b>"
+    elif action == "opportunity":
+        action_line = "🔥 <b>Hot Job Recommendation Found!</b>"
+        emoji = "💼"
     else:
         action_line = "🔄 <b>Status updated</b>"
 

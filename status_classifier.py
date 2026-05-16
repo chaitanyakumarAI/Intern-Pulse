@@ -89,19 +89,26 @@ _SYSTEM_PROMPT = """You are an expert at analyzing job/internship application em
 Your goal is to extract structured information from the email.
 
 CRITICAL FILTERS - Ignore the following completely (mark is_job_application=false):
-- Newsletters, digests, "recommended jobs", or marketing emails.
-- General notifications from platforms (e.g. LinkedIn updates, Internshala promotions).
-- Automated reminders to apply to jobs.
-- Advertisements or recruiter spam without a specific application context.
+- Course advertisements, masterclasses, or webinar promotions.
+
+If the email is a Job Recommendation, Digest, or "Hiring Now" alert (e.g. from Internshala, LinkedIn, Unstop):
+- Set is_job_application = true.
+- Look for the BEST role matching AI, Machine Learning, Data Science, Data Analyst, or Software Engineering.
+- Set company_name to the company hiring for that role (not the platform name).
+- Set role to that specific role.
+- Set status = "Job Opportunity".
+
+If the email is an application confirmation (e.g., "Thank you for applying", "Your application has been received" from Workday or others):
+- Set status = "Applied".
 
 Return ONLY valid JSON matching this schema:
 {
   "is_job_application": boolean,
   "reasoning": "Brief explanation of your classification and confidence",
   "confidence_score": integer (0 to 100),
-  "company_name": "Name of the company (or null if unknown/platform)",
+  "company_name": "Name of the company hiring (or null if unknown)",
   "role": "Job/internship title (or null)",
-  "status": "One of: Applied | Under Review | OA Sent | Interview Scheduled | Rejected | Offer | Ghosted | Needs Review | Unknown",
+  "status": "One of: Applied | Under Review | OA Sent | Interview Scheduled | Rejected | Offer | Ghosted | Needs Review | Job Opportunity | Unknown",
   "platform": "One of: LinkedIn | Internshala | Unstop | Wellfound | Naukri | Company Portal | Direct Email | Unknown",
   "interview_date": "ISO string or null",
   "oa_link": "URL or null",
@@ -109,13 +116,14 @@ Return ONLY valid JSON matching this schema:
 }
 
 STATUS RULES:
-- If confidence_score < 70, status MUST be "Needs Review".
+- If confidence_score < 70, status MUST be "Needs Review" (unless it's a "Job Opportunity").
 - "Offer" means a concrete offer was extended. Do not hallucinate this.
 - "Rejected" means explicitly rejected.
 - "Interview Scheduled" means an interview is confirmed.
 - "OA Sent" means an online assessment/test link was sent.
 - "Applied" means confirmation of application.
 - "Under Review" means moving to the next stage but no interview yet.
+- "Job Opportunity" means it's a digest/alert about a company hiring, NOT an application you submitted.
 """.strip()
 
 
@@ -444,9 +452,18 @@ def _keyword_classify(email: dict) -> dict:
     sender  = email.get("sender", "")
     text    = (subject + " " + body).lower()
 
-    if any(kw in text for kw in _OFFER_KW) or re.search(
-        r"congratulations.*(?:selected|offer|join)", text
-    ):
+    # Check if it's a digest/newsletter before standard keyword checking
+    rejections = [
+        "newsletter", "digest", "recommended jobs", "jobs for you", 
+        "internships you might like", "jobs you might like",
+        "new jobs matching your profile", "weekly updates",
+        "internships posted", "hackathons", "@unstop.news"
+    ]
+    subj_sender = f"{subject} {sender}".lower()
+    
+    if any(rej in subj_sender for rej in rejections):
+        status = "Job Opportunity"
+    elif any(kw in text for kw in _OFFER_KW) or re.search(r"congratulations.*(?:selected|offer|join)", text):
         status = "Offer"
     elif any(kw in text for kw in _INTERVIEW_KW):
         status = "Interview Scheduled"
