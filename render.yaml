@@ -3,6 +3,7 @@ services:
   - type: worker
     name: ai-job-tracker-worker
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python scheduler.py
     envVars:
@@ -29,6 +30,7 @@ services:
   - type: web
     name: ai-job-tracker-web
     env: node
+    plan: free
     rootDir: web
     buildCommand: npm install && npm run build
     startCommand: npm run start
