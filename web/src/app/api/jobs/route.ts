@@ -23,8 +23,8 @@ export async function GET() {
   }
 
   try {
-    const response = await notion.databases.query({
-      database_id: process.env.NOTION_DATABASE_ID!,
+    const response = await notion.dataSources.query({
+      data_source_id: process.env.NOTION_DATABASE_ID!,
       sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
       page_size: 100,
     });

@@ -23,8 +23,8 @@ async function sendTelegramMessage(chatId: number, text: string) {
 async function findJobByCompany(companyName: string) {
   if (!process.env.NOTION_DATABASE_ID) return null;
   
-  const response = await notion.databases.query({
-    database_id: process.env.NOTION_DATABASE_ID,
+  const response = await notion.dataSources.query({
+    data_source_id: process.env.NOTION_DATABASE_ID,
     sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
     page_size: 20 // Check recent jobs
   });
