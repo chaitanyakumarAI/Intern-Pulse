@@ -42,9 +42,6 @@ def setup_logging(name: str = "ai-job-tracker") -> logging.Logger:
 NOTION_API_KEY: str = os.getenv("NOTION_API_KEY", "")
 NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID", "")
 
-# ── OpenAI ───────────────────────────────────────────────────────────────────
-OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-
 # ── Gemini (free alternative to OpenAI) ──────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
@@ -125,17 +122,11 @@ def print_startup_diagnostics() -> None:
     notion_status   = _key_status(NOTION_API_KEY)
     telegram_status = _key_status(TELEGRAM_BOT_TOKEN)
 
-    if OPENAI_API_KEY and not OPENAI_API_KEY.startswith("your_"):
-        openai_status = f"{OPENAI_API_KEY[:8]}... (check quota)"
-    else:
-        openai_status = "NOT SET"
-
     logger = logging.getLogger("config")
     logger.info("=" * 60)
     logger.info("AI INTERNSHIP TRACKER — STARTUP DIAGNOSTICS")
     logger.info("=" * 60)
     logger.info("  Notion     : %s", notion_status)
-    logger.info("  OpenAI     : %s", openai_status)
     logger.info("  Gemini     : %s", gemini_status)
     logger.info("  Telegram   : %s", telegram_status)
     logger.info("  Gmail creds: %s", "FOUND" if GMAIL_CREDENTIALS_FILE.exists() else "MISSING")

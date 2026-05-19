@@ -9,6 +9,7 @@ Classification priority chain:
 import re
 import json
 import logging
+import time
 from typing import Optional
 from pathlib import Path
 from datetime import datetime, timezone
@@ -23,11 +24,9 @@ VALID_STATUSES = set(config.STATUS_LABELS) | {"Needs Review"}
 VALID_PLATFORMS = {"LinkedIn", "Internshala", "Unstop", "Wellfound", "Naukri", "Company Portal", "Direct Email", "Unknown"}
 
 # ── Session-level flags ───────────────────────────────────────────────────────
-_openai_quota_exceeded = False
 _gemini_failed         = False
 
 # ── Lazy clients ─────────────────────────────────────────────────────────────
-_openai_client = None
 _gemini_model  = None
 
 # ── Debugging ────────────────────────────────────────────────────────────────
@@ -57,18 +56,6 @@ def _log_debug(email: dict, raw_response: str, parsed: dict, method: str):
             json.dump(data[-100:], f, indent=2) # Keep last 100
     except Exception as e:
         logger.warning(f"Failed to write debug log: {e}")
-
-def _get_openai_client():
-    global _openai_client
-    if _openai_client is None:
-        try:
-            from openai import OpenAI
-            _openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
-        except Exception as exc:
-            logger.warning("OpenAI client init failed: %s", exc)
-            _openai_client = None
-    return _openai_client
-
 
 def _get_gemini_client():
     global _gemini_model
@@ -111,7 +98,7 @@ Return ONLY valid JSON matching this schema:
   "status": "One of: Applied | Under Review | OA Sent | Interview Scheduled | Rejected | Offer | Ghosted | Needs Review | Job Opportunity | Unknown",
   "platform": "One of: LinkedIn | Internshala | Unstop | Wellfound | Naukri | Company Portal | Direct Email | Unknown",
   "interview_date": "ISO string or null",
-  "oa_link": "URL or null",
+  "action_link": "URL for the online assessment, interview, or job application link (or null)",
   "recruiter_name": "Name of recruiter or null"
 }
 
@@ -131,10 +118,10 @@ STATUS RULES:
 
 def classify_email_ai(email: dict) -> dict:
     """
-    Classify an email using the best available AI model.
-    Falls back through: OpenAI -> Gemini -> Keyword classifier.
+    Classify an email using Google Gemini Flash.
+    Falls back to Keyword classifier if API fails or rate limit exceeded too many times.
     """
-    global _openai_quota_exceeded, _gemini_failed
+    global _gemini_failed
 
     subject = email.get("subject", "")
     body    = email.get("body", "")
@@ -151,79 +138,49 @@ def classify_email_ai(email: dict) -> dict:
         f"Body:\n{clean_text(body, max_chars=3000)}"
     )
 
-    # ── Try OpenAI ────────────────────────────────────────────────────────────
-    if not _openai_quota_exceeded:
-        client = _get_openai_client()
-        if client and config.OPENAI_API_KEY and not config.OPENAI_API_KEY.startswith("your_"):
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user",   "content": user_content},
-                    ],
-                    temperature=0.1,
-                    max_tokens=500,
-                    response_format={ "type": "json_object" }
-                )
-                raw = response.choices[0].message.content.strip()
-                result = _parse_llm_response(raw)
-                _log_debug(email, raw, result, "OpenAI")
-                
-                if not result.get("is_job_application", True):
-                    return _fallback_result(email, reason="Filtered by AI: " + result.get("reasoning", ""))
-                    
-                logger.info(
-                    "OpenAI classified [%s] -> status=%s company=%s conf=%s",
-                    subject[:50], result.get("status"), result.get("company"), result.get("confidence_score")
-                )
-                return result
-            except Exception as exc:
-                exc_str = str(exc)
-                if "insufficient_quota" in exc_str or "quota" in exc_str.lower() or "429" in exc_str:
-                    _openai_quota_exceeded = True
-                    logger.warning(
-                        "OpenAI quota exceeded — switching to Gemini (free) for this session."
-                    )
-                else:
-                    logger.warning("OpenAI classification failed (%s); trying Gemini.", exc)
-        else:
-            if not _openai_quota_exceeded:
-                logger.info("OpenAI not configured — trying Gemini.")
-            _openai_quota_exceeded = True  # skip on future calls
-
     # ── Try Gemini (free) ─────────────────────────────────────────────────────
     if not _gemini_failed:
         if config.GEMINI_API_KEY and not config.GEMINI_API_KEY.startswith("your_"):
             client = _get_gemini_client()
             if client:
-                try:
-                    full_prompt = f"{_SYSTEM_PROMPT}\n\n---\n\n{user_content}"
-                    # Use standard generate_content, instruct to return JSON
-                    response = client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=full_prompt,
-                        config={"temperature": 0.1, "response_mime_type": "application/json"}
-                    )
-                    raw = response.text.strip()
-                    result = _parse_llm_response(raw)
-                    _log_debug(email, raw, result, "Gemini")
-                    
-                    if not result.get("is_job_application", True):
-                        return _fallback_result(email, reason="Filtered by AI: " + result.get("reasoning", ""))
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        full_prompt = f"{_SYSTEM_PROMPT}\n\n---\n\n{user_content}"
+                        # Use standard generate_content, instruct to return JSON
+                        response = client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=full_prompt,
+                            config={"temperature": 0.1, "response_mime_type": "application/json"}
+                        )
+                        raw = response.text.strip()
+                        result = _parse_llm_response(raw)
+                        _log_debug(email, raw, result, "Gemini")
+                        
+                        # Add a 4.5 second delay after successful call to respect 15 requests per minute limit
+                        time.sleep(4.5)
+                        
+                        if not result.get("is_job_application", True):
+                            return _fallback_result(email, reason="Filtered by AI: " + result.get("reasoning", ""))
 
-                    logger.info(
-                        "Gemini classified [%s] -> status=%s company=%s conf=%s",
-                        subject[:50], result.get("status"), result.get("company"), result.get("confidence_score")
-                    )
-                    return result
-                except Exception as exc:
-                    exc_str = str(exc)
-                    if "quota" in exc_str.lower() or "429" in exc_str or "rate" in exc_str.lower():
-                        logger.warning("Gemini rate limit hit; falling back to keyword classifier.")
-                    else:
-                        _gemini_failed = True
-                        logger.warning("Gemini failed (%s); using keyword fallback.", exc)
+                        logger.info(
+                            "Gemini classified [%s] -> status=%s company=%s conf=%s",
+                            subject[:50], result.get("status"), result.get("company"), result.get("confidence_score")
+                        )
+                        return result
+                    except Exception as exc:
+                        exc_str = str(exc)
+                        if "quota" in exc_str.lower() or "429" in exc_str or "rate" in exc_str.lower():
+                            if attempt < max_retries - 1:
+                                wait_time = 15 * (attempt + 1)
+                                logger.warning(f"Gemini rate limit hit. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries - 1}...")
+                                time.sleep(wait_time)
+                            else:
+                                logger.warning("Gemini rate limit hit maximum retries; falling back to keyword classifier.")
+                        else:
+                            _gemini_failed = True
+                            logger.warning("Gemini failed (%s); using keyword fallback.", exc)
+                            break
         else:
             if not _gemini_failed:
                 logger.info("Gemini not configured (GEMINI_API_KEY not set) — using keyword fallback.")
@@ -272,7 +229,7 @@ def _parse_llm_response(raw: str) -> dict:
         "role":           data.get("role") or "Unknown",
         "status":         status,
         "platform":       platform,
-        "oa_link":        data.get("oa_link") or None,
+        "oa_link":        data.get("action_link") or data.get("oa_link") or None,
         "interview_date": data.get("interview_date") or None,
         "recruiter_name": data.get("recruiter_name") or None,
         "confidence_score": confidence,
@@ -314,6 +271,7 @@ _UNDER_REVIEW_KW = [
 _APPLIED_KW = [
     "application received", "thank you for applying", "we have received your",
     "successfully applied", "application submitted", "applied for",
+    "submitted successfully", "successfully submitted", "application for"
 ]
 
 # ── Role extraction — improved patterns ───────────────────────────────────────
@@ -413,7 +371,15 @@ def _extract_company(sender: str, subject: str = "") -> str:
         comp = m.group(1).strip()
         if len(comp) > 2 and comp.lower() not in ("internshala", "linkedin", "unstop"):
             return comp[:80]
-
+            
+    # Try to extract from common email patterns like "at Company" in body (simplistic)
+    if "application" in subject.lower() or "application" in body.lower() or "internship" in subject.lower():
+        m_body = re.search(r"at\s+([A-Z][a-zA-Z0-9\s,&.-]+?)(?:\s+has been|\s+successfully|\s+is|\s+was)", body[:2000])
+        if m_body:
+            comp = m_body.group(1).strip()
+            if len(comp) > 2 and comp.lower() not in ("internshala", "linkedin", "unstop"):
+                return comp[:80]
+                
     match = re.search(r"@([\w.-]+)\.", sender)
     if match:
         domain = match.group(1)

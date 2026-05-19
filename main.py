@@ -157,12 +157,23 @@ def run_once() -> dict:
             
         # c) Handle "Job Opportunity" digests specifically
         if status == "Job Opportunity":
-            logger.info("  -> Found a new Job Opportunity: %s at %s. Sending Telegram alert but skipping Notion.", role, company)
-            try:
-                from telegram_notifier import notify_status_change
-                notify_status_change(email, classification, action="opportunity")
-            except Exception as e:
-                logger.error("Failed to send Job Opportunity Telegram alert: %s", e)
+            from utils import make_email_id
+            from email_history import is_processed, mark_processed
+            
+            # Create a unique ID for this specific company+role opportunity
+            opportunity_id = f"opp_{make_email_id('opportunity', company, role)}"
+            
+            if is_processed(opportunity_id):
+                logger.info("  -> Job Opportunity already notified recently: %s at %s. Skipping.", role, company)
+            else:
+                logger.info("  -> Found a new Job Opportunity: %s at %s. Sending Telegram alert but skipping Notion.", role, company)
+                try:
+                    from telegram_notifier import notify_status_change
+                    notify_status_change(email, classification, action="opportunity")
+                    mark_processed([opportunity_id]) # Mark this specific role+company as notified
+                except Exception as e:
+                    logger.error("Failed to send Job Opportunity Telegram alert: %s", e)
+            
             stats["skipped"] += 1
             newly_processed_ids.append(gmail_id)
             continue

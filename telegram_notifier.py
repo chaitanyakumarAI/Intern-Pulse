@@ -88,9 +88,11 @@ def notify_status_change(
     else:
         action_line = "🔄 <b>Status updated</b>"
 
-    oa_line = ""
-    if classification.get("oa_link"):
-        oa_line = f"\n🔗 <b>OA Link:</b> {classification['oa_link']}"
+    link_url = classification.get("oa_link") or classification.get("action_link")
+    link_line = ""
+    if link_url:
+        label = "Job Link" if status == "Job Opportunity" else "Action Link"
+        link_line = f"\n🔗 <b>{label}:</b> {link_url}"
 
     notes = classification.get("notes", "")
     notes_line = f"\n📌 <i>{notes}</i>" if notes and notes != "(keyword fallback)" else ""
@@ -114,7 +116,7 @@ def notify_status_change(
         f"\n💼 <b>Role:</b> {role}"
         f"\n📧 <b>Subject:</b> {subject}"
         f"\n📅 <b>Time:</b> {date_iso}"
-        f"{oa_line}"
+        f"{link_line}"
         f"{notes_line}"
         f"{scam_line}"
         f"{prep_line}"
