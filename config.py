@@ -42,6 +42,9 @@ def setup_logging(name: str = "ai-job-tracker") -> logging.Logger:
 NOTION_API_KEY: str = os.getenv("NOTION_API_KEY", "")
 NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID", "")
 
+# ── OpenAI ───────────────────────────────────────────────────────────────────
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
 # ── Gemini (free alternative to OpenAI) ──────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 

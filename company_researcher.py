@@ -48,7 +48,7 @@ def analyze_company(company_name: str, role: str, status: str) -> Dict[str, str]
         prep_results = _search_web(prep_query, max_results=5)
 
     # 3. Use Gemini to analyze the findings
-    from status_classifier import _get_gemini_client, _get_openai_client
+    from status_classifier import _get_gemini_client
     
     prompt = f"""You are a cybersecurity expert and career advisor.
 Analyze the following web search results for the company "{company_name}" (Role: {role}).

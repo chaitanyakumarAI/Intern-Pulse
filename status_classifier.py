@@ -350,7 +350,7 @@ def _extract_role(subject: str, body: str = "") -> str:
     return "Unknown"
 
 
-def _extract_company(sender: str, subject: str = "") -> str:
+def _extract_company(sender: str, subject: str = "", body: str = "") -> str:
     name_match = re.match(r'^"?([^"<]+)"?\s*<', sender)
     if name_match:
         name = name_match.group(1).strip()
@@ -451,7 +451,7 @@ def _keyword_classify(email: dict) -> dict:
     else:
         status = "Unknown"
 
-    company = _extract_company(sender, subject)
+    company = _extract_company(sender, subject, body)
     role    = _extract_role(subject, body)
     platform = _determine_platform(sender, body)
 

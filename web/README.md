@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Intern Pulse (Web Dashboard) 🌌
 
-## Getting Started
+A premium, glassmorphic Next.js web application designed to visualize and manage your job and internship application pipeline. Powered by Google Gemini and Notion integrations, it provides automated tracking, scam detection, and prep sheets.
 
-First, run the development server:
+---
 
+## ✨ Features
+
+- **📊 Real-time Metrics**: Track active applications, scheduled interviews, and successful offers with response rate calculations.
+- **🎨 Glassmorphic Interface**: High-fidelity brutalist design featuring smooth hover states, dynamic animations via Framer Motion, and a 3D particle sphere.
+- **🔬 Job Safety Scanner**: Flag high-risk job opportunities using community reports and AI safety reviews.
+- **⚡ AI Prep Sheets**: View tailored study resources and anticipated interview questions directly inside the job card details.
+- **🚀 Kanban Board & Hub**: Organize applications across pipeline stages (Kanban) and access central AI insights in dedicated views.
+- **🔌 Zero-Config Demo Mode**: Automatically falls back to high-fidelity mock data if Notion environment variables are not set.
+
+---
+
+## 🛠️ Tech Stack
+
+- **Framework**: Next.js (App Router, Turbopack)
+- **Runtime**: React 19 / TypeScript
+- **Styling**: TailwindCSS & Custom CSS Globals
+- **Animations**: Framer Motion
+- **Graphics**: Three.js & React Three Fiber (for interactive 3D particle sphere)
+- **Charts**: Recharts & Lucide Icons
+
+---
+
+## 🚀 Getting Started
+
+### 1. Installation
+Clone the repository and install the dependencies:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd web
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Configure Environment Variables
+Create a `.env.local` file in the `web/` directory and populate your Notion API details:
+```env
+NOTION_API_KEY=your_notion_api_key
+NOTION_DATABASE_ID=your_notion_database_id
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Run Development Server
+```bash
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 4. Build for Production
+To test the optimized production build locally:
+```bash
+npm run build
+npm run start
+```
