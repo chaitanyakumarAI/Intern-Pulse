@@ -20,8 +20,11 @@ _STATUS_EMOJI = {
     "Rejected":             "❌",
     "Offer":                "🎉",
     "Ghosted":              "👻",
+    "Job Opportunity":      "💼",
+    "Needs Review":         "⚠️",
     "Unknown":              "❓",
 }
+
 
 
 def _is_configured() -> bool:

@@ -26,6 +26,11 @@ VALID_PLATFORMS = {"LinkedIn", "Internshala", "Unstop", "Wellfound", "Naukri", "
 # ── Session-level flags ───────────────────────────────────────────────────────
 _gemini_failed         = False
 
+def reset_gemini_session() -> None:
+    """Reset session failure flag so subsequent runs or scans can retry Gemini."""
+    global _gemini_failed
+    _gemini_failed = False
+
 # ── Lazy clients ─────────────────────────────────────────────────────────────
 _gemini_model  = None
 
@@ -180,7 +185,7 @@ def classify_email_ai(email: dict) -> dict:
                         full_prompt = f"{_SYSTEM_PROMPT}\n\n---\n\n{user_content}"
                         # Use standard generate_content, instruct to return JSON
                         response = client.models.generate_content(
-                            model='gemini-2.5-flash',
+                            model='gemini-flash-latest',
                             contents=full_prompt,
                             config={"temperature": 0.1, "response_mime_type": "application/json"}
                         )

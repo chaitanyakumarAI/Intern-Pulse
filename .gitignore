@@ -24,3 +24,7 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Temporary dev artifacts
+web/public/screenshots/
+*.tempmediaStorage/

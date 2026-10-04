@@ -72,15 +72,51 @@ def _heuristic_scam_check(company_name: str, scam_results: str) -> Dict[str, str
         "risk_notes": "[Heuristic Fallback] No significant scam reports or negative reviews found on Reddit or Google."
     }
 
+COMPANY_CACHE_FILE = config.DATA_DIR / "company_cache.json"
+
+def _load_cache() -> dict:
+    if COMPANY_CACHE_FILE.exists():
+        try:
+            with open(COMPANY_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_cache(cache: dict) -> None:
+    try:
+        COMPANY_CACHE_FILE.parent.mkdir(exist_ok=True)
+        with open(COMPANY_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        logger.warning("Failed to save company cache: %s", e)
+
 def analyze_company(company_name: str, role: str, status: str) -> Dict[str, str]:
     """
     Research a company.
     If it's any new application, check for scam/legitimacy risk.
     If it's an Interview, also generate an interview cheat sheet.
+    Results are cached on disk in data/company_cache.json to save API quota.
     """
     if company_name == "Unknown" or company_name.lower() in ("linkedin", "internshala", "unstop"):
         return {"scam_risk": "Unknown", "risk_notes": "", "prep_sheet": ""}
         
+    comp_key = company_name.lower().strip()
+    cache = _load_cache()
+    cached_entry = cache.get(comp_key)
+    
+    # If already cached and we don't need a new interview prep sheet, reuse!
+    if cached_entry:
+        has_prep = bool(cached_entry.get("prep_sheet"))
+        need_prep = (status == "Interview Scheduled")
+        if not need_prep or has_prep:
+            logger.info("Using cached company analysis for: %s (scam_risk=%s)", company_name, cached_entry.get("scam_risk"))
+            return {
+                "scam_risk": cached_entry.get("scam_risk", "Unknown"),
+                "risk_notes": cached_entry.get("risk_notes", ""),
+                "prep_sheet": cached_entry.get("prep_sheet", ""),
+            }
+
     logger.info("Conducting AI web research on company: %s", company_name)
     
     # 1. Search for scam/legitimacy
@@ -125,7 +161,7 @@ Return ONLY valid JSON with this schema:
             raise Exception("No active Gemini clients available.")
         try:
             response = active_client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-flash-latest',
                 contents=prompt,
                 config={"temperature": 0.2, "response_mime_type": "application/json"}
             )
@@ -142,21 +178,28 @@ Return ONLY valid JSON with this schema:
         # Rate limit spacing: sleep 4.5s to respect the 15 requests per minute limit
         time.sleep(4.5)
         
-        return {
+        final_res = {
             "scam_risk": data.get("scam_risk", "Unknown"),
             "risk_notes": data.get("risk_notes", ""),
             "prep_sheet": data.get("prep_sheet", "")
         }
+        cache[comp_key] = final_res
+        _save_cache(cache)
+        return final_res
     except Exception as e:
         logger.error("Failed to generate company analysis with Gemini: %s. Using heuristic fallback.", e)
 
             
     # Fallback to rules-based heuristic checker if AI is rate-limited or offline
     fallback_res = _heuristic_scam_check(company_name, scam_results)
-    return {
+    final_res = {
         "scam_risk": fallback_res["scam_risk"],
         "risk_notes": fallback_res["risk_notes"],
         "prep_sheet": ""
     }
+    cache[comp_key] = final_res
+    _save_cache(cache)
+    return final_res
+
 
 

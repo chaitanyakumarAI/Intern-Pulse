@@ -7,6 +7,8 @@ After that, the token is cached in token.json for silent re-use.
 import base64
 import logging
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -57,11 +59,20 @@ def get_gmail_service():
                     f"Gmail credentials file not found: {config.GMAIL_CREDENTIALS_FILE}\n"
                     "Download it from Google Cloud Console → APIs & Services → Credentials."
                 )
+            
+            # If running non-interactively (e.g. Next.js API, background daemon, or scheduler), don't hang indefinitely
+            if not sys.stdin or not sys.stdin.isatty():
+                if not os.environ.get("FORCE_GMAIL_AUTH"):
+                    raise PermissionError(
+                        "Gmail OAuth token expired or missing. Please run 'python main.py' in a terminal once to re-authenticate with Google."
+                    )
+
             flow = InstalledAppFlow.from_client_secrets_file(
                 str(config.GMAIL_CREDENTIALS_FILE), config.GMAIL_SCOPES
             )
             creds = flow.run_local_server(port=0)
             logger.info("Gmail OAuth flow completed.")
+
 
         # Cache token
         with open(config.GMAIL_TOKEN_FILE, "w") as token_file:
@@ -76,21 +87,30 @@ def get_gmail_service():
 # ── Message fetching ──────────────────────────────────────────────────────────
 
 @retry(max_attempts=3, delay=2.0)
-def fetch_messages(service, max_results: int = None) -> list[dict]:
+def fetch_messages(service, max_results: int = None, query: str = None) -> list[dict]:
     """
-    Fetch the latest `max_results` emails from the inbox.
+    Fetch the latest `max_results` emails from Gmail matching `query`.
     Returns a list of parsed email dicts.
     """
     if max_results is None:
         max_results = config.GMAIL_MAX_RESULTS
+    if query is None:
+        query = getattr(config, "GMAIL_QUERY", "")
 
-    logger.info("Fetching up to %d messages from Gmail…", max_results)
+    query_preview = query[:60] + "..." if query and len(query) > 60 else (query or "INBOX only")
+    logger.info("Fetching up to %d messages from Gmail (filter: %s)…", max_results, query_preview)
+
+    list_kwargs = {"userId": "me", "maxResults": max_results}
+    if query:
+        list_kwargs["q"] = query
+    else:
+        list_kwargs["labelIds"] = ["INBOX"]
 
     try:
         result = (
             service.users()
             .messages()
-            .list(userId="me", maxResults=max_results, labelIds=["INBOX"])
+            .list(**list_kwargs)
             .execute()
         )
     except HttpError as exc:
@@ -99,7 +119,7 @@ def fetch_messages(service, max_results: int = None) -> list[dict]:
 
     message_refs = result.get("messages", [])
     if not message_refs:
-        logger.info("No messages found in inbox.")
+        logger.info("No messages found matching search criteria.")
         return []
 
     emails = []

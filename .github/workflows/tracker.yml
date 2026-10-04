@@ -2,8 +2,8 @@ name: AI Internship Tracker
 
 on:
   schedule:
-    # Runs every 3 hours (UTC time)
-    - cron: "0 */3 * * *"
+    # Runs once daily at 08:00 UTC (or trigger on-demand via workflow_dispatch)
+    - cron: "0 8 * * *"
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:

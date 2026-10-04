@@ -218,14 +218,19 @@ You should see all tests passing. If any fail, the error message will tell you e
 
 ---
 
-### Step 8 — Run on a Schedule (Local)
+### Step 8 — On-Demand Sync & Daily Limit
+
+InternPulse uses an enforced daily sync quota (default 5 syncs/day, configurable via `DAILY_SYNC_LIMIT`) with automatic rollover at 00:00 UTC, removing the need for CPU-intensive background poll loops.
 
 ```bash
-# Runs every 3 hours indefinitely
+# Run a quota-checked sync
+python main.py
+
+# Or run via scheduler script
 python scheduler.py
 
-# Or a one-time run
-python scheduler.py --once
+# Force sync (bypasses daily quota for testing)
+python main.py --force
 ```
 
 ---
@@ -291,8 +296,9 @@ NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 AI-Internship-Tracker/
 │
 ├── 🐍 Python Backend
-│   ├── main.py                 # Pipeline orchestrator (entry point)
-│   ├── scheduler.py            # Recurring 3-hour local scheduler
+│   ├── main.py                 # Pipeline orchestrator (quota-enforced entry point)
+│   ├── sync_quota.py           # Daily sync quota manager & calendar rollover
+│   ├── scheduler.py            # On-demand quota-checked sync runner
 │   ├── gmail_reader.py         # Gmail OAuth2 + email fetching & parsing
 │   ├── status_classifier.py    # Gemini AI + keyword fallback classifier
 │   ├── company_researcher.py   # AI scam detection & interview prep generator

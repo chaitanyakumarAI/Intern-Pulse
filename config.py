@@ -57,6 +57,22 @@ GMAIL_CREDENTIALS_FILE: Path = ROOT_DIR / os.getenv("GMAIL_CREDENTIALS_FILE", "c
 GMAIL_TOKEN_FILE: Path = ROOT_DIR / os.getenv("GMAIL_TOKEN_FILE", "token.json")
 GMAIL_MAX_RESULTS: int = int(os.getenv("GMAIL_MAX_RESULTS", "50"))
 
+DEFAULT_GMAIL_QUERY: str = (
+    "-in:trash -in:spam ("
+    "subject:(applied OR application OR interview OR assessment OR \"offer letter\" OR shortlisted OR "
+    "\"coding test\" OR \"hiring\" OR \"status of your application\" OR \"thank you for your interest\" OR "
+    "\"next steps\" OR \"screening\" OR \"recruitment\" OR \"job opportunity\") "
+    "OR from:(greenhouse.io OR lever.co OR myworkday.com OR smartrecruiters.com OR ashbyhq.com OR "
+    "internshala.com OR unstop.com OR linkedin.com OR jobvite.com OR taleo.net OR icims.com OR workable.com)"
+    ")"
+)
+GMAIL_DAYS: str = os.getenv("GMAIL_DAYS", "").strip()
+_base_query: str = os.getenv("GMAIL_QUERY", DEFAULT_GMAIL_QUERY)
+if GMAIL_DAYS and GMAIL_DAYS.lower() != "all":
+    GMAIL_QUERY: str = f"{_base_query} newer_than:{GMAIL_DAYS}d"
+else:
+    GMAIL_QUERY: str = _base_query
+
 # Cloud Deployment: If the raw JSON is provided via ENV, write it to the file so the app can use it
 _creds_json = os.getenv("GMAIL_CREDENTIALS_JSON")
 if _creds_json and not GMAIL_CREDENTIALS_FILE.exists():
@@ -72,8 +88,8 @@ if _token_json and not GMAIL_TOKEN_FILE.exists():
     except Exception as e:
         logging.error("Failed to write GMAIL_TOKEN_JSON from env: %s", e)
 
-# ── Scheduler ────────────────────────────────────────────────────────────────
-POLL_INTERVAL_HOURS: float = float(os.getenv("POLL_INTERVAL_HOURS", "3"))
+# ── Daily Sync Limit & Quota ────────────────────────────────────────────────
+DAILY_SYNC_LIMIT: int = int(os.getenv("DAILY_SYNC_LIMIT", "5"))
 
 # ── Data dir ─────────────────────────────────────────────────────────────────
 DATA_DIR: Path = ROOT_DIR / "data"
@@ -95,7 +111,7 @@ STATUS_LABELS = [
 ]
 
 # ── Statuses that should trigger Telegram alerts ─────────────────────────────
-NOTIFY_STATUSES = {"Applied", "OA Sent", "Interview Scheduled", "Rejected", "Offer", "Job Opportunity"}
+NOTIFY_STATUSES = {"Applied", "OA Sent", "Interview Scheduled", "Rejected", "Offer", "Job Opportunity", "Needs Review"}
 
 
 def validate_env(required: list[str]) -> None:

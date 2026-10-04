@@ -30,7 +30,7 @@ else:
 required = [
     "google.auth", "googleapiclient", "google_auth_oauthlib",
     "notion_client", "dotenv", "pandas", "requests",
-    "openai", "schedule", "bs4",
+    "openai", "bs4",
 ]
 
 print("\nChecking imports…")
