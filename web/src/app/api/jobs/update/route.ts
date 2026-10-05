@@ -28,8 +28,9 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ success: true, id, status });
-  } catch (err: any) {
-    console.error('Notion update error:', err.message);
-    return NextResponse.json({ error: err.message, success: false }, { status: 500 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('Notion update error:', message);
+    return NextResponse.json({ error: message, success: false }, { status: 500 });
   }
 }

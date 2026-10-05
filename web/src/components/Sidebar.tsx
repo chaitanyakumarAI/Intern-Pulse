@@ -1,8 +1,9 @@
 'use client';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Columns2, Lightbulb, RefreshCw, Zap, Sparkles } from 'lucide-react';
+import Image from 'next/image';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { LayoutDashboard, Columns2, Lightbulb, RefreshCw, Zap } from 'lucide-react';
 
 const NAV = [
   { icon: LayoutDashboard, label: 'Applications', shortLabel: 'APPS', href: '/', desc: 'Dashboard & pipeline' },
@@ -31,7 +32,7 @@ export default function Sidebar() {
   const [quota, setQuota] = useState<SyncQuota | null>(null);
 
   // Poll scan status & daily quota
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/scan');
       if (res.ok) {
@@ -49,13 +50,18 @@ export default function Sidebar() {
         }
       }
     } catch {}
-  };
+  }, []);
 
   useEffect(() => {
-    checkStatus();
+    const timer = setTimeout(() => {
+      void checkStatus();
+    }, 0);
     const interval = setInterval(checkStatus, isScanning ? 2500 : 10000);
-    return () => clearInterval(interval);
-  }, [isScanning]);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+  }, [checkStatus, isScanning]);
 
   const triggerScan = async () => {
     if (isScanning) return;
@@ -121,9 +127,12 @@ export default function Sidebar() {
           {/* Brand Logo Header */}
           <div style={{ padding: '24px 20px 20px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', flexShrink: 0 }}>
             <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-              <img
+              <Image
                 src="/assets/brand-logo.jpg"
                 alt="InternPulse Logo"
+                width={36}
+                height={36}
+                priority
                 style={{
                   width: 36, height: 36, borderRadius: 10, flexShrink: 0,
                   objectFit: 'cover',
@@ -347,9 +356,12 @@ export default function Sidebar() {
       }}>
         {/* Brand */}
         <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <img
+          <Image
             src="/assets/brand-logo.jpg"
             alt="InternPulse Logo"
+            width={30}
+            height={30}
+            priority
             style={{
               width: 30, height: 30, borderRadius: 8,
               objectFit: 'cover',

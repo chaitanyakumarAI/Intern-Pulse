@@ -3,7 +3,7 @@ import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from '@/components/Sidebar';
-import { AlertTriangle, Sparkles, Shield, ShieldAlert, Zap, Calendar, ExternalLink, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, Sparkles, Shield, ShieldAlert, Zap, Calendar, ArrowRight, CheckCircle2 } from 'lucide-react';
 
 const CosmicFluidOrb = dynamic(() => import('@/components/CosmicFluidOrb'), { ssr: false });
 
@@ -178,14 +178,14 @@ export default function HubPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'opps' | 'threats'>('opps');
-  const [timeRange, setTimeRange] = useState<string>('ALL');
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('internpulse_time_range');
-      if (saved) setTimeRange(saved);
-    } catch {}
-  }, []);
+  const [timeRange, setTimeRange] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('internpulse_time_range') || 'ALL';
+      } catch {}
+    }
+    return 'ALL';
+  });
 
   const handleTimeRangeChange = (newRange: string) => {
     setTimeRange(newRange);

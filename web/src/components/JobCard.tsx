@@ -1,7 +1,7 @@
 'use client';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { Building2, Briefcase, Calendar, Shield, ChevronDown, ExternalLink } from 'lucide-react';
+import { Building2, Calendar, Shield, ChevronDown, ExternalLink } from 'lucide-react';
 import TiltCard from './TiltCard';
 
 interface Job {

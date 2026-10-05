@@ -1,7 +1,6 @@
 'use client';
 import { useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
-import { Sparkles, ShieldCheck } from 'lucide-react';
 
 interface CosmicFluidOrbProps {
   size?: number;
@@ -453,7 +452,7 @@ export default function CosmicFluidOrb({
 
     /* ── Animation Loop (Continuous Delta Accumulation) ── */
     let animationFrameId: number;
-    let clock = new THREE.Clock();
+    const clock = new THREE.Clock();
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);

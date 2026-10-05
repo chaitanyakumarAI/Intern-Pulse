@@ -115,11 +115,12 @@ export async function GET() {
     const content = fs.readFileSync(statusFile, 'utf-8');
     const data = JSON.parse(content);
     return NextResponse.json({ ...data, quota });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({
       is_running: false,
       status: 'error',
-      error: err.message,
+      error: message,
       quota,
     });
   }
@@ -202,7 +203,7 @@ export async function POST(req: Request) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
     fs.writeFileSync(statusFile, JSON.stringify(initialStatus, null, 2), 'utf-8');
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Failed to write initial status file:', err);
   }
 
@@ -229,18 +230,19 @@ export async function POST(req: Request) {
       status: initialStatus,
       quota,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
     // Revert status on spawn error
     try {
       fs.writeFileSync(
         statusFile,
-        JSON.stringify({ is_running: false, status: 'error', error: err.message }, null, 2),
+        JSON.stringify({ is_running: false, status: 'error', error: message }, null, 2),
         'utf-8'
       );
     } catch {}
 
     return NextResponse.json(
-      { ok: false, message: `Failed to start scan process: ${err.message}` },
+      { ok: false, message: `Failed to start scan process: ${message}` },
       { status: 500 }
     );
   }

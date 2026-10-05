@@ -1,6 +1,6 @@
 'use client';
 import dynamic from 'next/dynamic';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from '@/components/Sidebar';
@@ -17,8 +17,7 @@ import {
   Layers,
   ArrowRight,
   TrendingUp,
-  Award,
-  AlertTriangle
+  Award
 } from 'lucide-react';
 
 const CosmicFluidOrb = dynamic(() => import('@/components/CosmicFluidOrb'), { ssr: false });
@@ -295,19 +294,36 @@ function buildActivityData(jobs: Job[]) {
     .map(([label, value]) => ({ label, value }));
 }
 
+interface ScanStatusData {
+  is_running?: boolean;
+  status?: string;
+  last_run_time?: string | null;
+  stats?: { processed?: number; created?: number } | null;
+  quota?: {
+    date: string;
+    syncs_today: number;
+    daily_limit: number;
+    remaining: number;
+    last_sync_time: string | null;
+    resets_at: string;
+  };
+  error?: string;
+  [key: string]: unknown;
+}
+
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [isMock, setIsMock] = useState(false);
   const [filter, setFilter] = useState('ALL');
-  const [timeRange, setTimeRange] = useState<string>('ALL');
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('internpulse_time_range');
-      if (saved) setTimeRange(saved);
-    } catch {}
-  }, []);
+  const [timeRange, setTimeRange] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('internpulse_time_range') || 'ALL';
+      } catch {}
+    }
+    return 'ALL';
+  });
 
   const handleTimeRangeChange = (newRange: string) => {
     setTimeRange(newRange);
@@ -315,7 +331,7 @@ export default function Dashboard() {
   };
 
   // Pipeline Scan State & Daily Quota
-  const [scanStatus, setScanStatus] = useState<any>(null);
+  const [scanStatus, setScanStatus] = useState<ScanStatusData | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const isScanningRef = useRef(isScanning);
   useEffect(() => {
@@ -332,10 +348,10 @@ export default function Dashboard() {
     resets_at: string;
   } | null>(null);
 
-  const fetchJobs = async () => {
-    setLoading(true);
+  const fetchJobs = useCallback(async () => {
     try {
-      const d = await fetch('/api/jobs').then(r => r.json());
+      const res = await fetch('/api/jobs');
+      const d = await res.json();
       setJobs(d.jobs ?? []);
       setIsMock(d.isMock ?? false);
     } catch {
@@ -343,9 +359,9 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const checkScanStatus = async () => {
+  const checkScanStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/scan');
       if (res.ok) {
@@ -362,21 +378,26 @@ export default function Dashboard() {
           const c = data.stats?.created ?? 0;
           setScanMessage(`Sync complete! ${p} emails checked (${c} new records added).`);
           setTimeout(() => setScanMessage(null), 6000);
-          fetchJobs();
+          void fetchJobs();
         }
       }
     } catch (e) {
       console.error('Failed to check scan status:', e);
     }
-  };
+  }, [fetchJobs]);
 
   useEffect(() => {
-    fetchJobs();
-    checkScanStatus();
-    const handleRefresh = () => fetchJobs();
+    const timer = setTimeout(() => {
+      void fetchJobs();
+      void checkScanStatus();
+    }, 0);
+    const handleRefresh = () => { void fetchJobs(); };
     window.addEventListener('internpulse-refresh', handleRefresh);
-    return () => window.removeEventListener('internpulse-refresh', handleRefresh);
-  }, []);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('internpulse-refresh', handleRefresh);
+    };
+  }, [fetchJobs, checkScanStatus]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout | undefined;
@@ -386,7 +407,7 @@ export default function Dashboard() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isScanning]);
+  }, [isScanning, checkScanStatus]);
 
   const triggerScan = async () => {
     if (quota && quota.remaining <= 0) {
@@ -843,7 +864,7 @@ export default function Dashboard() {
                       No applications found in this window
                     </p>
                     <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                      Try selecting "ALL TIME" or triggering an inbox scan.
+                      Try selecting &ldquo;ALL TIME&rdquo; or triggering an inbox scan.
                     </p>
                   </div>
                 ) : (
@@ -995,7 +1016,7 @@ export default function Dashboard() {
 
             {/* Quick Refresh Pipeline Button */}
             <button
-              onClick={fetchJobs}
+              onClick={() => { setLoading(true); void fetchJobs(); }}
               className="btn-ghost"
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',

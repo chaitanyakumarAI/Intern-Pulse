@@ -31,11 +31,14 @@ async function findJobByCompany(companyName: string) {
 
   const searchStr = companyName.toLowerCase();
   
-  for (const page of response.results as any[]) {
-    const titleProp = page.properties['Company']?.title?.[0]?.plain_text || 
-                      page.properties['company']?.title?.[0]?.plain_text || '';
+  for (const page of response.results as Array<Record<string, unknown>>) {
+    const properties = page.properties as Record<string, Record<string, unknown>> | undefined;
+    const companyProp = properties?.['Company'] ?? properties?.['company'];
+    const titleArr = companyProp?.title as Array<{ plain_text?: string }> | undefined;
+    const titleProp = titleArr?.[0]?.plain_text || '';
     if (titleProp.toLowerCase().includes(searchStr)) {
-      return { id: page.id, company: titleProp, currentStatus: page.properties['Status']?.select?.name };
+      const statusProp = properties?.['Status']?.select as { name?: string } | undefined;
+      return { id: (page.id as string) ?? '', company: titleProp, currentStatus: statusProp?.name };
     }
   }
   return null;

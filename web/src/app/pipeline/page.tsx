@@ -183,14 +183,14 @@ function KanbanCard({ job, colColor, onDragStart }: { job: Job; colColor: string
 export default function PipelinePage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState<string>('ALL');
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('internpulse_time_range');
-      if (saved) setTimeRange(saved);
-    } catch {}
-  }, []);
+  const [timeRange, setTimeRange] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('internpulse_time_range') || 'ALL';
+      } catch {}
+    }
+    return 'ALL';
+  });
 
   const handleTimeRangeChange = (newRange: string) => {
     setTimeRange(newRange);

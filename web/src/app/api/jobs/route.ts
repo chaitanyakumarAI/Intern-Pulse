@@ -22,16 +22,31 @@ function heuristicScamCheck(companyName: string): { scam_risk: string; risk_note
   return null;
 }
 
-function extractProp(page: any, name: string, type: string): any {
-  const prop = page.properties?.[name];
+function extractProp(page: Record<string, unknown>, name: string, type: string): string | null {
+  const properties = page.properties as Record<string, Record<string, unknown>> | undefined;
+  const prop = properties?.[name];
   if (!prop) return null;
   switch (type) {
-    case 'title':   return prop.title?.[0]?.plain_text ?? null;
-    case 'rich_text': return prop.rich_text?.[0]?.plain_text ?? null;
-    case 'select':  return prop.select?.name ?? null;
-    case 'date':    return prop.date?.start ?? null;
-    case 'url':     return prop.url ?? null;
-    default:        return null;
+    case 'title': {
+      const arr = prop.title as Array<{ plain_text?: string }> | undefined;
+      return arr?.[0]?.plain_text ?? null;
+    }
+    case 'rich_text': {
+      const arr = prop.rich_text as Array<{ plain_text?: string }> | undefined;
+      return arr?.[0]?.plain_text ?? null;
+    }
+    case 'select': {
+      const sel = prop.select as { name?: string } | undefined;
+      return sel?.name ?? null;
+    }
+    case 'date': {
+      const d = prop.date as { start?: string } | undefined;
+      return d?.start ?? null;
+    }
+    case 'url':
+      return (prop.url as string) ?? null;
+    default:
+      return null;
   }
 }
 
@@ -48,17 +63,17 @@ export async function GET() {
       page_size: 100,
     });
 
-    const jobs = response.results.map((page: any) => {
+    const jobs = (response.results as Array<Record<string, unknown>>).map((page) => {
       const company = extractProp(page, 'Company', 'title') ?? extractProp(page, 'company', 'title') ?? 'Unknown';
       const scamCheck = heuristicScamCheck(company);
 
       return {
-        id: page.id,
+        id: (page.id as string) ?? '',
         company,
         role:       extractProp(page, 'Role', 'rich_text') ?? extractProp(page, 'role', 'rich_text') ?? 'Unknown',
         status:     extractProp(page, 'Status', 'select') ?? 'Applied',
         platform:   extractProp(page, 'Platform', 'select') ?? 'Unknown',
-        date:       extractProp(page, 'Date Applied', 'date') ?? page.created_time?.split('T')[0] ?? '',
+        date:       extractProp(page, 'Date Applied', 'date') ?? (typeof page.created_time === 'string' ? page.created_time.split('T')[0] : ''),
         oa_link:    extractProp(page, 'OA Link', 'url'),
         scam_risk:  scamCheck?.scam_risk ?? extractProp(page, 'Scam Risk', 'select') ?? 'Unknown',
         risk_notes: scamCheck?.risk_notes ?? extractProp(page, 'Risk Notes', 'rich_text') ?? '',
@@ -67,9 +82,10 @@ export async function GET() {
     });
 
     return NextResponse.json({ jobs, isMock: false });
-  } catch (err: any) {
-    console.error('Notion API error:', err.message);
-    return NextResponse.json({ jobs: getMockData(), isMock: true, error: err.message });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('Notion API error:', message);
+    return NextResponse.json({ jobs: getMockData(), isMock: true, error: message });
   }
 }
 
