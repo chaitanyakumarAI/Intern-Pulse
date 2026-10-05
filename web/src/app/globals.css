@@ -248,6 +248,19 @@ h1, h2, h3, h4, h5, h6 {
   transform: translateY(-1px);
 }
 
+/* ── Accessible Keyboard Focus Indicators ── */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+.btn-primary-pill:focus-visible,
+.btn-secondary-pill:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #38bdf8 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25), 0 0 16px rgba(56, 189, 248, 0.4) !important;
+}
+
 /* ── Bento & Glass Cards ── */
 .glass-card {
   position: relative;

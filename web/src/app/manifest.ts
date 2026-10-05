@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: 'Real-time AI-powered job application tracker with scam detection and interview cheat sheets.',
     start_url: '/',
     display: 'standalone',
-    background_color: '#040509',
-    theme_color: '#00ff88',
+    background_color: '#06070d',
+    theme_color: '#06070d',
     orientation: 'portrait-primary',
     icons: [
       {

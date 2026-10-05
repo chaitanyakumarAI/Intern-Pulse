@@ -378,7 +378,9 @@ export default function CosmicFluidOrb({
     let currentRotationY = 0;
     let isDragging = false;
     let prevPointer = { x: 0, y: 0 };
-    let speed = 1.0;
+    let targetSpeed = 1.0;
+    let currentSpeed = 1.0;
+    let accumulatedTime = 0.0;
 
     const onPointerDown = (e: MouseEvent) => {
       isDragging = true;
@@ -410,10 +412,10 @@ export default function CosmicFluidOrb({
     };
 
     const onPointerEnter = () => {
-      speed = 1.5;
+      targetSpeed = 1.5;
     };
     const onPointerLeave = () => {
-      speed = 1.0;
+      targetSpeed = 1.0;
       targetRotationX = 0;
       targetRotationY = 0;
       isDragging = false;
@@ -449,41 +451,42 @@ export default function CosmicFluidOrb({
     window.addEventListener('touchmove', onTouchMove, { passive: true });
     window.addEventListener('touchend', onTouchEnd);
 
-    /* ── Animation Loop ── */
+    /* ── Animation Loop (Continuous Delta Accumulation) ── */
     let animationFrameId: number;
     let clock = new THREE.Clock();
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
-      const delta = clock.getDelta();
-      const elapsedTime = clock.getElapsedTime() * speedMultiplier * speed;
+      const delta = Math.min(clock.getDelta(), 0.1);
+      currentSpeed += (targetSpeed - currentSpeed) * 0.08;
+      accumulatedTime += delta * speedMultiplier * currentSpeed;
 
-      // Update fluid shader time
-      fluidMaterial.uniforms.uTime.value = elapsedTime;
-      ribbonMat1.uniforms.uTime.value = elapsedTime;
-      ribbonMat2.uniforms.uTime.value = elapsedTime;
-      haloMat.uniforms.uTime.value = elapsedTime;
+      // Update fluid shader time smoothly
+      fluidMaterial.uniforms.uTime.value = accumulatedTime;
+      ribbonMat1.uniforms.uTime.value = accumulatedTime;
+      ribbonMat2.uniforms.uTime.value = accumulatedTime;
+      haloMat.uniforms.uTime.value = accumulatedTime;
 
       // Smooth inertia rotation interpolation
       currentRotationX += (targetRotationX - currentRotationX) * 0.06;
       currentRotationY += (targetRotationY - currentRotationY) * 0.06;
 
-      fluidOrb.rotation.y = currentRotationY + elapsedTime * 0.15;
-      fluidOrb.rotation.x = currentRotationX + Math.sin(elapsedTime * 0.3) * 0.08;
+      fluidOrb.rotation.y = currentRotationY + accumulatedTime * 0.15;
+      fluidOrb.rotation.x = currentRotationX + Math.sin(accumulatedTime * 0.3) * 0.08;
 
       // Swirling tendrils rotation
-      ribbonGroup.rotation.y = -elapsedTime * 0.45 + currentRotationY;
-      ribbonGroup.rotation.x = Math.cos(elapsedTime * 0.25) * 0.15 + currentRotationX;
-      ribbon1.rotation.z += delta * 0.5;
-      ribbon2.rotation.z -= delta * 0.4;
+      ribbonGroup.rotation.y = -accumulatedTime * 0.45 + currentRotationY;
+      ribbonGroup.rotation.x = Math.cos(accumulatedTime * 0.25) * 0.15 + currentRotationX;
+      ribbon1.rotation.z += delta * 0.5 * currentSpeed;
+      ribbon2.rotation.z -= delta * 0.4 * currentSpeed;
 
       // Luminous Perimeter Halo Ring rotation
-      halo.rotation.z = elapsedTime * 0.2 + currentRotationY * 0.15;
+      halo.rotation.z = accumulatedTime * 0.2 + currentRotationY * 0.15;
       halo.rotation.x = currentRotationX * 0.15;
 
       // Ambient stardust rotation
-      stardust.rotation.y = elapsedTime * 0.08;
-      stardust.rotation.x = Math.sin(elapsedTime * 0.1) * 0.05;
+      stardust.rotation.y = accumulatedTime * 0.08;
+      stardust.rotation.x = Math.sin(accumulatedTime * 0.1) * 0.05;
 
       renderer.render(scene, camera);
     };

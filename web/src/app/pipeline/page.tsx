@@ -221,18 +221,25 @@ export default function PipelinePage() {
     const job = jobs.find(j => j.id === jobId);
     if (!job || job.status === targetStatus) return;
 
+    const prevStatus = job.status;
+
     // Optimistically update
     setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: targetStatus } : j));
 
-    // Update backend
+    // Update backend with rollback on failure
     try {
-      await fetch('/api/jobs/update', {
+      const res = await fetch('/api/jobs/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: jobId, status: targetStatus })
       });
+      if (!res.ok) {
+        throw new Error(`Failed to update status on Notion (${res.status})`);
+      }
     } catch (err) {
-      console.error('API Error:', err);
+      console.error('API Error updating status:', err);
+      // Revert optimistic update so Kanban UI stays strictly in sync with Notion
+      setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: prevStatus } : j));
     }
   };
 

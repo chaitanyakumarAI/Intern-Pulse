@@ -191,15 +191,13 @@ Return ONLY valid JSON with this schema:
 
             
     # Fallback to rules-based heuristic checker if AI is rate-limited or offline
+    # Do not cache heuristic fallback permanently so future runs can retry full AI analysis
     fallback_res = _heuristic_scam_check(company_name, scam_results)
-    final_res = {
+    return {
         "scam_risk": fallback_res["scam_risk"],
         "risk_notes": fallback_res["risk_notes"],
         "prep_sheet": ""
     }
-    cache[comp_key] = final_res
-    _save_cache(cache)
-    return final_res
 
 
 

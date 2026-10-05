@@ -1,6 +1,6 @@
 'use client';
 import dynamic from 'next/dynamic';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from '@/components/Sidebar';
@@ -317,6 +317,11 @@ export default function Dashboard() {
   // Pipeline Scan State & Daily Quota
   const [scanStatus, setScanStatus] = useState<any>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const isScanningRef = useRef(isScanning);
+  useEffect(() => {
+    isScanningRef.current = isScanning;
+  }, [isScanning]);
+
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [quota, setQuota] = useState<{
     date: string;
@@ -351,7 +356,7 @@ export default function Dashboard() {
         }
         if (data.is_running) {
           setIsScanning(true);
-        } else if (isScanning) {
+        } else if (isScanningRef.current) {
           setIsScanning(false);
           const p = data.stats?.processed ?? 0;
           const c = data.stats?.created ?? 0;

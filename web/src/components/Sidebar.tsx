@@ -1,7 +1,7 @@
 'use client';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { LayoutDashboard, Columns2, Lightbulb, RefreshCw, Zap, Sparkles } from 'lucide-react';
 
 const NAV = [
@@ -22,6 +22,11 @@ interface SyncQuota {
 export default function Sidebar() {
   const pathname = usePathname();
   const [isScanning, setIsScanning] = useState(false);
+  const isScanningRef = useRef(isScanning);
+  useEffect(() => {
+    isScanningRef.current = isScanning;
+  }, [isScanning]);
+
   const [scanText, setScanText] = useState<string | null>(null);
   const [quota, setQuota] = useState<SyncQuota | null>(null);
 
@@ -36,7 +41,7 @@ export default function Sidebar() {
         }
         if (data.is_running) {
           setIsScanning(true);
-        } else if (isScanning) {
+        } else if (isScanningRef.current) {
           setIsScanning(false);
           setScanText('Synced!');
           setTimeout(() => setScanText(null), 3500);
@@ -61,8 +66,20 @@ export default function Sidebar() {
     }
     setIsScanning(true);
     setScanText('Syncing…');
+
+    // Retrieve active time horizon window from client persistence
+    let savedRange: string | undefined;
     try {
-      const res = await fetch('/api/scan', { method: 'POST' });
+      const r = localStorage.getItem('internpulse_time_range');
+      if (r && r !== 'ALL') savedRange = r;
+    } catch {}
+
+    try {
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: savedRange }),
+      });
       const data = await res.json().catch(() => null);
       if (data?.quota) {
         setQuota(data.quota);

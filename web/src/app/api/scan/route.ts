@@ -135,8 +135,19 @@ export async function POST(req: Request) {
   let force = false;
   try {
     const body = await req.json();
-    if (body?.days && body.days !== 'ALL') {
-      daysParam = String(body.days);
+    if (body?.days !== undefined && body?.days !== null && body.days !== 'ALL') {
+      const parsedDays = parseInt(String(body.days).trim(), 10);
+      if (isNaN(parsedDays) || parsedDays <= 0 || parsedDays > 3650 || String(parsedDays) !== String(body.days).trim()) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: 'INVALID_DAYS_PARAMETER',
+            message: 'Invalid `days` parameter. Must be a positive integer between 1 and 3650, or "ALL".',
+          },
+          { status: 400 }
+        );
+      }
+      daysParam = String(parsedDays);
     }
     if (body?.force === true) {
       force = true;

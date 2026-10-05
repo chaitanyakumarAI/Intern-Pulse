@@ -11,9 +11,11 @@ const SCAM_BLOCKLIST: Record<string, string> = {
 };
 
 function heuristicScamCheck(companyName: string): { scam_risk: string; risk_notes: string } | null {
-  const clean = companyName.toLowerCase().replace(/[\s-]/g, '');
+  const norm = companyName.toLowerCase().trim();
   for (const [key, val] of Object.entries(SCAM_BLOCKLIST)) {
-    if (clean.includes(key)) {
+    // Use token / word boundaries so legitimate companies containing a substring aren't falsely flagged
+    const regex = new RegExp(`(^|[\\s._,-])${key}([\\s._,-]|$)`, 'i');
+    if (regex.test(norm) || norm === key) {
       return { scam_risk: 'High', risk_notes: val };
     }
   }
