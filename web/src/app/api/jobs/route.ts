@@ -53,7 +53,14 @@ function extractProp(page: Record<string, unknown>, name: string, type: string):
 export async function GET() {
   if (!process.env.NOTION_API_KEY || !process.env.NOTION_DATABASE_ID) {
     // Return rich mock data when env vars are not configured
-    return NextResponse.json({ jobs: getMockData(), isMock: true });
+    return NextResponse.json(
+      { jobs: getMockData(), isMock: true },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        },
+      }
+    );
   }
 
   try {
@@ -81,7 +88,14 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({ jobs, isMock: false });
+    return NextResponse.json(
+      { jobs, isMock: false },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        },
+      }
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('Notion API error:', message);

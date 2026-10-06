@@ -1016,7 +1016,12 @@ export default function Dashboard() {
 
             {/* Quick Refresh Pipeline Button */}
             <button
-              onClick={() => { setLoading(true); void fetchJobs(); }}
+              onClick={() => {
+                setLoading(true);
+                void fetchJobs();
+                setScanMessage('Workspace refreshed from Notion.');
+                setTimeout(() => setScanMessage(null), 3000);
+              }}
               className="btn-ghost"
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',

@@ -74,7 +74,17 @@ function getAvatarColor(name: string) {
   return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
 }
 
-function KanbanCard({ job, colColor, onDragStart }: { job: Job; colColor: string; onDragStart: (e: React.DragEvent) => void }) {
+function KanbanCard({
+  job,
+  colColor,
+  onDragStart,
+  onMoveStage,
+}: {
+  job: Job;
+  colColor: string;
+  onDragStart: (e: React.DragEvent) => void;
+  onMoveStage?: (jobId: string, newStage: string) => void;
+}) {
   const [fg, bg] = getAvatarColor(job.company);
   const initials = getInitials(job.company);
   const risk = job.scam_risk ?? 'Unknown';
@@ -159,6 +169,41 @@ function KanbanCard({ job, colColor, onDragStart }: { job: Job; colColor: string
           )}
         </div>
 
+        {/* Date + Quick Stage Switcher */}
+        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Calendar size={10} style={{ color: 'var(--text-dim)' }} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.62rem', color: 'var(--text-dim)' }}>
+              {job.date || 'Active'}
+            </span>
+          </div>
+
+          {onMoveStage && (
+            <select
+              value={job.status}
+              onChange={(e) => onMoveStage(job.id, e.target.value)}
+              aria-label={`Change stage for ${job.company}`}
+              style={{
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                color: 'var(--text-secondary)',
+                borderRadius: 6,
+                padding: '2px 8px',
+                fontSize: '0.62rem',
+                fontFamily: 'var(--font-body)',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              {COLUMNS.map(col => (
+                <option key={col.key} value={col.key} style={{ background: '#0e1122', color: '#ffffff' }}>
+                  Move ➔ {col.label}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
         {/* OA link */}
         {job.oa_link && (
           <a
@@ -213,11 +258,9 @@ export default function PipelinePage() {
     e.dataTransfer.setData('jobId', jobId);
   };
 
-  const handleDrop = async (e: React.DragEvent, targetStatus: string) => {
-    e.preventDefault();
-    const jobId = e.dataTransfer.getData('jobId');
-    if (!jobId) return;
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  const moveJobStage = async (jobId: string, targetStatus: string) => {
     const job = jobs.find(j => j.id === jobId);
     if (!job || job.status === targetStatus) return;
 
@@ -225,6 +268,8 @@ export default function PipelinePage() {
 
     // Optimistically update
     setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: targetStatus } : j));
+    setToast({ message: `Moved ${job.company} to ${targetStatus}`, type: 'success' });
+    setTimeout(() => setToast(null), 3500);
 
     // Update backend with rollback on failure
     try {
@@ -238,9 +283,18 @@ export default function PipelinePage() {
       }
     } catch (err) {
       console.error('API Error updating status:', err);
-      // Revert optimistic update so Kanban UI stays strictly in sync with Notion
+      // Revert optimistic update
       setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: prevStatus } : j));
+      setToast({ message: `Failed to update ${job.company}. Reverted.`, type: 'error' });
+      setTimeout(() => setToast(null), 4000);
     }
+  };
+
+  const handleDrop = (e: React.DragEvent, targetStatus: string) => {
+    e.preventDefault();
+    const jobId = e.dataTransfer.getData('jobId');
+    if (!jobId) return;
+    void moveJobStage(jobId, targetStatus);
   };
 
   const timeFilteredJobs = jobs.filter(j => isWithinDays(j.date, timeRange));
@@ -434,7 +488,12 @@ export default function PipelinePage() {
                           transition={{ delay: ci * 0.03 + i * 0.03 }}
                           layoutId={job.id}
                         >
-                          <KanbanCard job={job} colColor={col.color} onDragStart={(e) => handleDragStart(e, job.id)} />
+                          <KanbanCard
+                            job={job}
+                            colColor={col.color}
+                            onDragStart={(e) => handleDragStart(e, job.id)}
+                            onMoveStage={moveJobStage}
+                          />
                         </motion.div>
                       ))
                     )}
@@ -444,6 +503,41 @@ export default function PipelinePage() {
             })}
           </div>
         )}
+
+        {/* Floating Toast Notification */}
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.95 }}
+              style={{
+                position: 'fixed',
+                bottom: 28,
+                right: 28,
+                zIndex: 9999,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '10px 18px',
+                borderRadius: 9999,
+                background: toast.type === 'error' ? 'rgba(38, 12, 20, 0.95)' : 'rgba(12, 20, 36, 0.95)',
+                border: `1px solid ${toast.type === 'error' ? 'rgba(244, 63, 94, 0.4)' : 'rgba(56, 189, 248, 0.4)'}`,
+                boxShadow: '0 12px 35px rgba(0, 0, 0, 0.6)',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                color: '#ffffff',
+                fontFamily: 'var(--font-body)',
+                fontSize: '0.78rem',
+              }}
+            >
+              <span style={{ color: toast.type === 'error' ? '#fb7185' : '#38bdf8' }}>
+                {toast.type === 'error' ? '⚠️' : '✓'}
+              </span>
+              <span>{toast.message}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
     </div>
   );
