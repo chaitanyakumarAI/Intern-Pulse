@@ -235,6 +235,27 @@ python main.py --force
 
 ---
 
+### Step 9 — 2-Way Interactive Telegram Bot
+
+You can control your application pipeline, check stats, and trigger Gmail scans directly from Telegram via `@InternSlaveBot`:
+
+| Command | Action | Example |
+|---|---|---|
+| `/status <Company> <Status>` | Update job stage in Notion | `/status Google Offer` |
+| `/list [limit]` | View latest applications and status badges | `/list 8` |
+| `/scan [days]` | Trigger an on-demand Gmail sync cycle | `/scan 7` |
+| `/quota` | Check remaining daily sync quota | `/quota` |
+| `/stats` | View active pipeline conversion & velocity | `/stats` |
+| `/help` | View interactive command guide | `/help` |
+
+**To run the interactive Telegram Bot listener locally:**
+```bash
+python telegram_bot.py
+```
+*(When deployed to Vercel, the Next.js API webhook at `/api/telegram/webhook` handles commands 24/7 automatically).*
+
+---
+
 ## ⚙️ GitHub Actions (Fully Cloud Automated — Recommended)
 
 This is the best way to run InternPulse — it runs automatically in the cloud every 3 hours for free.
@@ -304,6 +325,7 @@ AI-Internship-Tracker/
 │   ├── company_researcher.py   # AI scam detection & interview prep generator
 │   ├── notion_updater.py       # Notion database upsert with deduplication
 │   ├── telegram_notifier.py    # Rich HTML Telegram message builder & sender
+│   ├── telegram_bot.py         # 2-way interactive Telegram bot command runner
 │   ├── email_history.py        # Processed email cache (prevents duplicates)
 │   ├── dashboard.py            # Fetches Notion rows for the web UI API
 │   ├── config.py               # All env vars, logging setup, constants
