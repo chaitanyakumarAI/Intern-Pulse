@@ -581,30 +581,32 @@ export default function Dashboard() {
                   disabled={isScanning || quota?.remaining === 0}
                   className="btn-primary-pill"
                   style={{
+                    padding: '9px 20px',
+                    fontSize: '0.78rem',
+                    letterSpacing: '0.01em',
                     opacity: quota?.remaining === 0 ? 0.6 : 1,
                     cursor: quota?.remaining === 0 ? 'not-allowed' : isScanning ? 'wait' : 'pointer',
                     border: quota?.remaining === 0 ? '1px solid rgba(251, 113, 133, 0.4)' : undefined,
                   }}
                 >
                   {isScanning ? (
-                    <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                    <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} />
                   ) : (
                     <Zap
-                      size={14}
+                      size={13}
                       style={{
                         color: '#ffffff',
                         fill: 'currentColor',
-                        filter: 'drop-shadow(0 0 6px rgba(255, 255, 255, 0.6))',
                         flexShrink: 0
                       }}
                     />
                   )}
                   <span>
                     {isScanning
-                      ? 'SYNCING GMAIL...'
+                      ? 'Syncing Gmail...'
                       : quota?.remaining === 0
-                      ? 'DAILY LIMIT REACHED (5/5)'
-                      : 'SCAN INBOX NOW'}
+                      ? 'Daily Limit Reached (0/5)'
+                      : 'Scan Inbox Now'}
                   </span>
                 </button>
 

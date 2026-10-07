@@ -125,26 +125,38 @@ export default function Sidebar() {
 
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
           {/* Brand Logo Header */}
-          <div style={{ padding: '24px 20px 20px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', flexShrink: 0 }}>
-            <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-              <Image
-                src="/assets/brand-logo.jpg"
-                alt="InternPulse Logo"
-                width={36}
-                height={36}
-                priority
-                style={{
-                  width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-                  objectFit: 'cover',
-                  border: '1px solid rgba(168, 85, 247, 0.45)',
-                  boxShadow: '0 0 16px rgba(139, 92, 246, 0.35)',
-                }}
-              />
+          <div style={{ padding: '22px 20px 18px', borderBottom: '1px solid rgba(255, 255, 255, 0.06)', flexShrink: 0 }}>
+            <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' }}>
+              <div style={{
+                position: 'relative',
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                padding: 1.5,
+                background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(56, 189, 248, 0.25))',
+                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.5), 0 0 10px rgba(139, 92, 246, 0.15)',
+                flexShrink: 0,
+              }}>
+                <Image
+                  src="/assets/brand-logo.jpg"
+                  alt="InternPulse Logo"
+                  width={33}
+                  height={33}
+                  priority
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    borderRadius: 8.5,
+                    objectFit: 'cover',
+                    display: 'block',
+                  }}
+                />
+              </div>
               <div>
                 <div style={{
-                  fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.05rem',
+                  fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.02rem',
                   letterSpacing: '-0.02em', color: '#ffffff', lineHeight: 1,
-                  display: 'flex', alignItems: 'center', gap: 3
+                  display: 'flex', alignItems: 'center', gap: 4
                 }}>
                   <span>INTERN</span>
                   <span style={{
@@ -155,10 +167,11 @@ export default function Sidebar() {
                 </div>
                 <div style={{
                   fontFamily: 'var(--font-body)', fontSize: '0.62rem',
-                  color: 'var(--text-dim)', marginTop: 4, letterSpacing: '0.01em',
-                  fontWeight: 500
+                  color: 'var(--text-dim)', marginTop: 4, letterSpacing: '0.02em',
+                  fontWeight: 500, display: 'flex', alignItems: 'center', gap: 5
                 }}>
-                  AI Career Intelligence
+                  <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#34d399', display: 'inline-block' }} />
+                  <span>AI Career Intelligence</span>
                 </div>
               </div>
             </Link>
@@ -235,19 +248,19 @@ export default function Sidebar() {
             })}
           </nav>
 
-          {/* Footer Quick Sync Pill Button & Daily Quota */}
+          {/* Footer Quick Sync Button & Daily Quota */}
           <div style={{
-            padding: '16px',
-            borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+            padding: '14px 16px',
+            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
             flexShrink: 0,
-            background: 'rgba(0, 0, 0, 0.2)'
+            background: 'rgba(0, 0, 0, 0.25)'
           }}>
             <div style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              marginBottom: 8, fontFamily: 'var(--font-body)', fontSize: '0.64rem',
+              marginBottom: 8, fontFamily: 'var(--font-body)', fontSize: '0.63rem',
               color: 'var(--text-dim)', fontWeight: 500,
             }}>
-              <span>GMAIL ENGINE</span>
+              <span style={{ letterSpacing: '0.05em' }}>GMAIL ENGINE</span>
               {scanText ? (
                 <span style={{ color: scanText.includes('Limit') ? '#fb7185' : '#38bdf8', fontWeight: 600 }}>{scanText}</span>
               ) : quota ? (
@@ -274,7 +287,7 @@ export default function Sidebar() {
             {quota && (
               <div style={{ marginBottom: 10 }}>
                 <div style={{
-                  display: 'flex', gap: 3, width: '100%', height: 4,
+                  display: 'flex', gap: 3, width: '100%', height: 3,
                   background: 'rgba(255, 255, 255, 0.06)', borderRadius: 2, overflow: 'hidden'
                 }}>
                   {Array.from({ length: quota.daily_limit }).map((_, i) => {
@@ -285,9 +298,11 @@ export default function Sidebar() {
                         style={{
                           flex: 1,
                           height: '100%',
+                          borderRadius: 1,
                           background: isUsed
-                            ? (quota.remaining === 0 ? '#fb7185' : 'linear-gradient(90deg, #c084fc, #818cf8)')
-                            : 'rgba(255, 255, 255, 0.1)',
+                            ? (quota.remaining === 0 ? '#fb7185' : '#34d399')
+                            : 'rgba(255, 255, 255, 0.08)',
+                          boxShadow: isUsed ? (quota.remaining === 0 ? '0 0 4px #fb7185' : '0 0 4px #34d399') : 'none',
                           transition: 'background 0.3s ease',
                         }}
                       />
@@ -300,19 +315,50 @@ export default function Sidebar() {
             <button
               onClick={triggerScan}
               disabled={isScanning || (quota?.remaining === 0)}
-              className="btn-primary-pill"
               style={{
                 width: '100%',
-                padding: '9px 14px',
-                fontSize: '0.74rem',
+                padding: '8px 12px',
+                borderRadius: 9,
+                display: 'flex',
+                alignItems: 'center',
                 justifyContent: 'space-between',
-                opacity: quota?.remaining === 0 ? 0.6 : 1,
+                background: quota?.remaining === 0
+                  ? 'rgba(251, 113, 133, 0.08)'
+                  : isScanning
+                  ? 'rgba(139, 92, 246, 0.2)'
+                  : 'rgba(139, 92, 246, 0.12)',
+                border: `1px solid ${
+                  quota?.remaining === 0
+                    ? 'rgba(251, 113, 133, 0.3)'
+                    : 'rgba(168, 85, 247, 0.28)'
+                }`,
+                color: quota?.remaining === 0 ? '#fb7185' : '#ffffff',
+                fontFamily: 'var(--font-display)',
+                fontSize: '0.74rem',
+                fontWeight: 600,
+                letterSpacing: '0.01em',
                 cursor: quota?.remaining === 0 ? 'not-allowed' : isScanning ? 'wait' : 'pointer',
-                border: quota?.remaining === 0 ? '1px solid rgba(251, 113, 133, 0.3)' : undefined,
+                opacity: quota?.remaining === 0 ? 0.65 : 1,
+                transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                boxShadow: isScanning ? '0 0 16px rgba(139, 92, 246, 0.3)' : 'none',
+              }}
+              onMouseEnter={(e) => {
+                if (!isScanning && quota?.remaining !== 0) {
+                  e.currentTarget.style.background = 'rgba(139, 92, 246, 0.22)';
+                  e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.45)';
+                  e.currentTarget.style.boxShadow = '0 4px 14px rgba(139, 92, 246, 0.2)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isScanning && quota?.remaining !== 0) {
+                  e.currentTarget.style.background = 'rgba(139, 92, 246, 0.12)';
+                  e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.28)';
+                  e.currentTarget.style.boxShadow = 'none';
+                }
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <RefreshCw size={13} style={{ animation: isScanning ? 'spin 1s linear infinite' : 'none' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <RefreshCw size={12} style={{ animation: isScanning ? 'spin 1s linear infinite' : 'none', color: '#c084fc' }} />
                 <span>
                   {isScanning
                     ? 'Syncing...'
@@ -322,12 +368,14 @@ export default function Sidebar() {
                 </span>
               </div>
               <span style={{
-                fontSize: '0.6rem', padding: '2px 8px', borderRadius: 9999,
-                background: quota?.remaining === 0 ? 'rgba(251, 113, 133, 0.2)' : 'rgba(255, 255, 255, 0.15)',
-                color: quota?.remaining === 0 ? '#fb7185' : '#ffffff',
-                fontWeight: 600,
+                fontFamily: 'var(--font-mono)', fontSize: '0.62rem',
+                padding: '2px 7px', borderRadius: 6,
+                background: quota?.remaining === 0 ? 'rgba(251, 113, 133, 0.18)' : 'rgba(255, 255, 255, 0.08)',
+                border: `1px solid ${quota?.remaining === 0 ? 'rgba(251, 113, 133, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`,
+                color: quota?.remaining === 0 ? '#fb7185' : '#c084fc',
+                fontWeight: 700,
               }}>
-                {quota ? `${quota.remaining}/${quota.daily_limit}` : 'NOW'}
+                {quota ? `${quota.remaining}/${quota.daily_limit}` : 'Ready'}
               </span>
             </button>
 
@@ -355,22 +403,33 @@ export default function Sidebar() {
         padding: '0 16px',
       }}>
         {/* Brand */}
-        <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Image
-            src="/assets/brand-logo.jpg"
-            alt="InternPulse Logo"
-            width={30}
-            height={30}
-            priority
-            style={{
-              width: 30, height: 30, borderRadius: 8,
-              objectFit: 'cover',
-              border: '1px solid rgba(168, 85, 247, 0.4)',
-              boxShadow: '0 0 12px rgba(139, 92, 246, 0.3)',
-            }}
-          />
+        <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+          <div style={{
+            position: 'relative',
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            padding: 1.5,
+            background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(56, 189, 248, 0.25))',
+            flexShrink: 0,
+          }}>
+            <Image
+              src="/assets/brand-logo.jpg"
+              alt="InternPulse Logo"
+              width={27}
+              height={27}
+              priority
+              style={{
+                width: '100%',
+                height: '100%',
+                borderRadius: 7,
+                objectFit: 'cover',
+                display: 'block',
+              }}
+            />
+          </div>
           <span style={{
-            fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem',
+            fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '0.96rem',
             letterSpacing: '-0.02em', color: '#ffffff',
           }}>
             INTERN<span style={{
@@ -381,20 +440,34 @@ export default function Sidebar() {
           </span>
         </Link>
 
-        {/* Quick Sync Pill Button */}
+        {/* Quick Sync Action Button */}
         <button
           onClick={triggerScan}
           disabled={isScanning || (quota?.remaining === 0)}
-          className="btn-primary-pill"
           style={{
-            padding: '6px 14px',
-            fontSize: '0.7rem',
-            boxShadow: '0 0 16px rgba(139, 92, 246, 0.35)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 12px',
+            borderRadius: 8,
+            background: quota?.remaining === 0
+              ? 'rgba(251, 113, 133, 0.08)'
+              : 'rgba(139, 92, 246, 0.12)',
+            border: `1px solid ${
+              quota?.remaining === 0
+                ? 'rgba(251, 113, 133, 0.3)'
+                : 'rgba(168, 85, 247, 0.28)'
+            }`,
+            color: quota?.remaining === 0 ? '#fb7185' : '#ffffff',
+            fontFamily: 'var(--font-display)',
+            fontSize: '0.68rem',
+            fontWeight: 600,
             opacity: quota?.remaining === 0 ? 0.6 : 1,
-            cursor: quota?.remaining === 0 ? 'not-allowed' : 'pointer',
+            cursor: quota?.remaining === 0 ? 'not-allowed' : isScanning ? 'wait' : 'pointer',
+            transition: 'all 0.2s ease',
           }}
         >
-          <RefreshCw size={11} style={{ animation: isScanning ? 'spin 1s linear infinite' : 'none' }} />
+          <RefreshCw size={11} style={{ animation: isScanning ? 'spin 1s linear infinite' : 'none', color: '#c084fc' }} />
           <span>
             {isScanning
               ? 'SYNCING…'

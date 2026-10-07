@@ -190,37 +190,40 @@ h1, h2, h3, h4, h5, h6 {
   display: inline-block;
 }
 
-/* ── Premium Pill Buttons (Craftify Inspired) ── */
+/* ── Modern Premium Action Buttons (Linear & Vercel Inspired) ── */
 .btn-primary-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 10px 24px;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
+  padding: 8px 18px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #8b5cf6 0%, #6d28d9 100%);
   color: #ffffff;
   font-family: var(--font-display);
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  box-shadow: 0 0 25px rgba(124, 58, 237, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 8px rgba(109, 40, 217, 0.35), 0 1px 2px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   cursor: pointer;
 }
 .btn-primary-pill:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 0 35px rgba(139, 92, 246, 0.6), 0 8px 20px rgba(0, 0, 0, 0.4);
-  background: linear-gradient(135deg, #8b5cf6 0%, #4f46e5 100%);
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), 0 4px 14px rgba(139, 92, 246, 0.45), 0 2px 4px rgba(0, 0, 0, 0.4);
+  background: linear-gradient(180deg, #9333ea 0%, #7c3aed 100%);
+  border-color: rgba(255, 255, 255, 0.28);
 }
 .btn-primary-pill:active:not(:disabled) {
   transform: translateY(0);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .btn-primary-pill:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
   box-shadow: none;
+  filter: grayscale(25%);
 }
 
 .btn-secondary-pill {
@@ -228,13 +231,13 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 9px 20px;
-  border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--text-secondary);
   font-family: var(--font-display);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 600;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);

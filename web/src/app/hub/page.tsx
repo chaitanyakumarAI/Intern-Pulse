@@ -16,6 +16,7 @@ interface Job {
   date: string;
   scam_risk?: string;
   risk_notes?: string;
+  oa_link?: string;
 }
 
 const TIME_RANGES = [
@@ -45,6 +46,15 @@ const RISK_COLOR: Record<string, string> = {
   Unknown: 'var(--text-dim)'
 };
 
+function cleanCompanyName(raw: string): string {
+  if (!raw) return 'Opportunity';
+  if (/unstop/i.test(raw)) return 'Unstop';
+  if (/internshala/i.test(raw)) return 'Internshala';
+  if (/linkedin/i.test(raw)) return 'LinkedIn';
+  if (/wellfound|angel/i.test(raw)) return 'Wellfound';
+  return raw.replace(/^(from|at|via)\s+/i, '').trim();
+}
+
 function matchScore(job: Job): number {
   let h = 0;
   for (const c of (job.company + job.role)) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
@@ -54,6 +64,7 @@ function matchScore(job: Job): number {
 function OpportunityCard({ job, index }: { job: Job; index: number }) {
   const score = matchScore(job);
   const scoreColor = score >= 90 ? '#34d399' : score >= 82 ? '#38bdf8' : '#c084fc';
+  const displayCompany = cleanCompanyName(job.company);
 
   return (
     <motion.div
@@ -62,41 +73,53 @@ function OpportunityCard({ job, index }: { job: Job; index: number }) {
       transition={{ delay: 0.05 + index * 0.06, duration: 0.3 }}
       className="glass-card"
       style={{
-        padding: '20px 20px 18px',
-        borderRadius: 16,
+        padding: '18px 20px',
+        borderRadius: 14,
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
+        gap: 14,
+        background: 'rgba(12, 15, 30, 0.75)',
+        border: '1px solid rgba(255, 255, 255, 0.07)',
       }}
     >
       <div>
         {/* Company + Score Badge */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.96rem', fontWeight: 700, color: '#ffffff' }}>
-            {job.company}
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.94rem', fontWeight: 700, color: '#ffffff' }}>
+            {displayCompany}
           </div>
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            padding: '3px 10px', borderRadius: 9999,
-            background: `${scoreColor}15`, border: `1px solid ${scoreColor}35`,
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '3px 8px', borderRadius: 8,
+            background: `${scoreColor}14`, border: `1px solid ${scoreColor}30`,
           }}>
-            <Sparkles size={11} style={{ color: scoreColor }} />
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: '0.78rem', fontWeight: 800, color: scoreColor }}>
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: scoreColor,
+              boxShadow: `0 0 6px ${scoreColor}`
+            }} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', fontWeight: 700, color: scoreColor }}>
               {score}% MATCH
             </span>
           </div>
         </div>
 
         {/* Role & Source */}
-        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.84rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
+        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
           {job.role}
         </div>
-        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', color: 'var(--text-dim)', marginBottom: 14 }}>
+        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', color: 'var(--text-dim)', marginBottom: 12 }}>
           Detected via {job.platform} {job.date && `• ${job.date}`}
         </div>
 
         {/* Match progress track */}
-        <div className="progress-bar" style={{ marginBottom: 16, height: 4 }}>
+        <div style={{
+          width: '100%', height: 3,
+          background: 'rgba(255, 255, 255, 0.06)',
+          borderRadius: 9999, overflow: 'hidden',
+          marginBottom: 4,
+        }}>
           <motion.div
             initial={{ width: 0 }}
             animate={{ width: `${score}%` }}
@@ -104,17 +127,84 @@ function OpportunityCard({ job, index }: { job: Job; index: number }) {
             style={{
               height: '100%',
               borderRadius: 9999,
-              background: `linear-gradient(90deg, ${scoreColor}, ${scoreColor}dd)`,
-              boxShadow: `0 0 10px ${scoreColor}60`
+              background: `linear-gradient(90deg, ${scoreColor}99, ${scoreColor})`,
+              boxShadow: `0 0 8px ${scoreColor}60`
             }}
           />
         </div>
       </div>
 
-      <button className="btn-primary-pill" style={{ width: '100%', padding: '8px 16px', fontSize: '0.74rem' }}>
-        <span>Apply to Opportunity</span>
-        <ArrowRight size={13} />
-      </button>
+      {job.oa_link ? (
+        <a
+          href={job.oa_link}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 7,
+            padding: '8px 14px',
+            borderRadius: 9,
+            background: 'rgba(139, 92, 246, 0.12)',
+            border: '1px solid rgba(168, 85, 247, 0.25)',
+            color: '#ffffff',
+            fontFamily: 'var(--font-display)',
+            fontSize: '0.74rem',
+            fontWeight: 600,
+            textDecoration: 'none',
+            cursor: 'pointer',
+            transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'rgba(139, 92, 246, 0.22)';
+            e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.45)';
+            e.currentTarget.style.boxShadow = '0 4px 14px rgba(139, 92, 246, 0.25)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'rgba(139, 92, 246, 0.12)';
+            e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.25)';
+            e.currentTarget.style.boxShadow = 'none';
+          }}
+        >
+          <span>Apply to Opportunity</span>
+          <ArrowRight size={12} style={{ opacity: 0.85 }} />
+        </a>
+      ) : (
+        <button
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 7,
+            padding: '8px 14px',
+            borderRadius: 9,
+            background: 'rgba(139, 92, 246, 0.12)',
+            border: '1px solid rgba(168, 85, 247, 0.25)',
+            color: '#ffffff',
+            fontFamily: 'var(--font-display)',
+            fontSize: '0.74rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'rgba(139, 92, 246, 0.22)';
+            e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.45)';
+            e.currentTarget.style.boxShadow = '0 4px 14px rgba(139, 92, 246, 0.25)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'rgba(139, 92, 246, 0.12)';
+            e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.25)';
+            e.currentTarget.style.boxShadow = 'none';
+          }}
+        >
+          <span>Apply to Opportunity</span>
+          <ArrowRight size={12} style={{ opacity: 0.85 }} />
+        </button>
+      )}
     </motion.div>
   );
 }
