@@ -55,7 +55,7 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
     from datetime import datetime, timezone
     from gmail_reader import get_gmail_service, fetch_messages
     from status_classifier import classify_email_ai, reset_gemini_session, _extract_company, _extract_role
-    from notion_updater import upsert_application
+    from db_manager import upsert_application
     from telegram_notifier import notify_status_change, notify_summary
     from utils import is_job_related
     from email_history import get_processed_ids, mark_processed
@@ -170,13 +170,8 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
         })
         return stats
 
-    # â”€â”€ Check Notion availability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    notion_available = (
-        bool(config.NOTION_API_KEY)
-        and not config.NOTION_API_KEY.startswith("your_")
-        and bool(config.NOTION_DATABASE_ID)
-        and not config.NOTION_DATABASE_ID.startswith("your_")
-    )
+    # Database Engine Availability (Supabase or SQLite fallback)
+    db_available = True
 
     newly_processed_ids = []
 
@@ -279,8 +274,8 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
             newly_processed_ids.append(gmail_id)
             continue
             
-        # d) Notion upsert (for actual applications)
-        if notion_available:
+        # d) Database upsert (Supabase or SQLite)
+        if db_available:
             try:
                 result = upsert_application(email, classification)
                 action = result.get("action", "skipped")

@@ -12,6 +12,7 @@
     "@notionhq/client": "^5.21.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
+    "@supabase/supabase-js": "^2.109.0",
     "@types/three": "^0.184.1",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.16.0",

@@ -279,7 +279,7 @@ export default function PipelinePage() {
         body: JSON.stringify({ id: jobId, status: targetStatus })
       });
       if (!res.ok) {
-        throw new Error(`Failed to update status on Notion (${res.status})`);
+        throw new Error(`Failed to update status in database (${res.status})`);
       }
     } catch (err) {
       console.error('API Error updating status:', err);
@@ -341,7 +341,7 @@ export default function PipelinePage() {
                       flexShrink: 0
                     }}
                   />
-                  <span>Interactive Pipeline Workflow • Live Notion Sync</span>
+                  <span>Interactive Pipeline Workflow • Live Database Sync</span>
                 </div>
               </motion.div>
 
@@ -355,7 +355,7 @@ export default function PipelinePage() {
                   color: 'var(--text-muted)', marginTop: 8, maxWidth: 540,
                   lineHeight: 1.6
                 }}>
-                  Drag candidate cards across stages to automatically synchronize application status in Notion and trigger interview prep sheets.
+                  Drag candidate cards across stages to automatically synchronize application status in Supabase and trigger interview prep sheets.
                 </p>
               </motion.div>
             </div>

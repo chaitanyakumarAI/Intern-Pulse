@@ -78,7 +78,7 @@ export default function ErrorBoundary({
             marginBottom: 24,
           }}
         >
-          An unexpected interruption occurred while syncing your career telemetry. Your application records remain safely preserved in Notion.
+          An unexpected interruption occurred while syncing your career telemetry. Your application records remain safely preserved in Supabase.
         </p>
 
         {error.message && (

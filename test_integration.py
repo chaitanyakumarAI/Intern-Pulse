@@ -51,8 +51,7 @@ print("\n[2] Config & Environment")
 import config
 
 def _check_config():
-    assert config.NOTION_API_KEY, "NOTION_API_KEY empty"
-    assert config.NOTION_DATABASE_ID, "NOTION_DATABASE_ID empty"
+    assert hasattr(config, "SUPABASE_URL"), "SUPABASE_URL slot missing in config"
     assert config.TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN empty"
     return True
 test("Config loads all required keys", _check_config)
@@ -153,42 +152,32 @@ test("Email history: mark and retrieve ID", _test_history_roundtrip)
 test("Email history: file exists after write",
      lambda: (config.DATA_DIR / "processed_emails.json").exists())
 
-# ── 6. Notion Connectivity ─────────────────────────────────────────────────
-print("\n[6] Notion Connectivity")
-from notion_client import Client
+# ── 6. Database Engine (Supabase / SQLite) ─────────────────────────────────
+print("\n[6] Database Engine (Supabase & SQLite Fallback)")
+import db_manager
 
-def _test_notion_connect():
-    client = Client(auth=config.NOTION_API_KEY)
-    me = client.users.me()
-    assert me.get("id"), "No user ID returned"
+def _test_db_fetch():
+    apps = db_manager.get_all_applications()
+    assert isinstance(apps, list), "Applications must be a list"
+    assert len(apps) >= 20, f"Expected >= 20 seeded applications, found {len(apps)}"
     return True
-test("Notion API: authenticated", _test_notion_connect)
+test("Database: fetch all applications (seeded >= 20 rows)", _test_db_fetch)
 
-def _test_notion_query():
-    client = Client(auth=config.NOTION_API_KEY)
-    resp = client.data_sources.query(config.NOTION_DATABASE_ID, page_size=1)
-    return isinstance(resp.get("results"), list)
-test("Notion: data_sources.query works", _test_notion_query)
+def _test_db_slug_lookup():
+    app = db_manager.find_application_by_slug("loreal")
+    assert app is not None, "Failed to find canonical 'loreal' application"
+    assert "l'oréal" in app["company"].lower() or "loreal" in app["company"].lower()
+    return True
+test("Database: canonical slug lookup for 'loreal'", _test_db_slug_lookup)
 
-def _test_notion_page_create_and_delete():
-    client = Client(auth=config.NOTION_API_KEY)
-    props = {
-        "Company": {"title": [{"text": {"content": "IntegrationTestCo"}}]},
-        "Role": {"rich_text": [{"text": {"content": "Test Engineer"}}]},
-        "Status": {"select": {"name": "Applied"}},
-        "Platform": {"select": {"name": "Email"}},
-        "Notes": {"rich_text": [{"text": {"content": "[eid:INTEGTEST001] auto-deleted"}}]},
-    }
-    page = client.pages.create(
-        parent={"type": "data_source_id", "data_source_id": config.NOTION_DATABASE_ID},
-        properties=props,
+def _test_db_upsert():
+    res = db_manager.upsert_application(
+        {"email_id": "test_integ_eid_001", "date_iso": "2026-10-07T12:00:00Z"},
+        {"company": "Integration Co", "role": "QA Intern", "status": "Applied"}
     )
-    pid = page["id"]
-    assert pid, "No page ID returned"
-    # Clean up
-    client.pages.update(page_id=pid, archived=True)
+    assert res.get("action") in ("created", "updated")
     return True
-test("Notion: pages.create + archive works", _test_notion_page_create_and_delete)
+test("Database: upsert application", _test_db_upsert)
 
 # ── 7. Telegram ───────────────────────────────────────────────────────────
 print("\n[7] Telegram")
@@ -216,8 +205,9 @@ def _test_dashboard_parse():
     rows = dashboard.fetch_all_rows()
     apps = dashboard.parse_rows(rows)
     assert isinstance(apps, list)
+    assert len(apps) >= 20, f"Expected >= 20 applications, got {len(apps)}"
     return True
-test("dashboard.py: fetch + parse Notion rows", _test_dashboard_parse)
+test("dashboard.py: fetch + parse database rows", _test_dashboard_parse)
 
 # ── 9. Gmail token ────────────────────────────────────────────────────────
 print("\n[9] Gmail Token")

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { Client } from '@notionhq/client';
-
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
+import fs from 'fs';
+import path from 'path';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 const SCAM_BLOCKLIST: Record<string, string> = {
   labmentix: "Known predatory platform offering fake or paid internship cert schemes.",
@@ -48,98 +48,96 @@ function cleanDisplayCompany(name: string): string {
   return clean;
 }
 
-function extractProp(page: Record<string, unknown>, name: string, type: string): string | null {
-  const properties = page.properties as Record<string, Record<string, unknown>> | undefined;
-  const prop = properties?.[name];
-  if (!prop) return null;
-  switch (type) {
-    case 'title': {
-      const arr = prop.title as Array<{ plain_text?: string }> | undefined;
-      return arr?.[0]?.plain_text ?? null;
-    }
-    case 'rich_text': {
-      const arr = prop.rich_text as Array<{ plain_text?: string }> | undefined;
-      return arr?.[0]?.plain_text ?? null;
-    }
-    case 'select': {
-      const sel = prop.select as { name?: string } | undefined;
-      return sel?.name ?? null;
-    }
-    case 'date': {
-      const d = prop.date as { start?: string } | undefined;
-      return d?.start ?? null;
-    }
-    case 'url':
-      return (prop.url as string) ?? null;
-    default:
-      return null;
-  }
-}
-
 export async function GET() {
-  if (!process.env.NOTION_API_KEY || !process.env.NOTION_DATABASE_ID) {
-    // Return rich mock data when env vars are not configured
-    return NextResponse.json(
-      { jobs: getMockData(), isMock: true },
-      {
-        headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate',
-        },
+  // 1. Primary Engine: Supabase Cloud Database (~15ms latency)
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('applications')
+        .select('*')
+        .order('last_checked', { ascending: false });
+
+      if (error) {
+        console.error('Supabase query error:', error.message);
+      } else if (data && data.length > 0) {
+        const jobs = data.map((row) => {
+          const comp = cleanDisplayCompany(row.company);
+          const scamCheck = heuristicScamCheck(comp);
+          return {
+            id: String(row.id),
+            company: comp,
+            role: row.role || 'Candidate / Intern',
+            status: row.status || 'Applied',
+            platform: row.platform || 'Direct Email',
+            date: row.applied_date ? String(row.applied_date).split('T')[0] : '',
+            oa_link: row.application_link || null,
+            scam_risk: scamCheck?.scam_risk || row.scam_risk || 'Low',
+            risk_notes: scamCheck?.risk_notes || row.risk_notes || '',
+            prep_sheet: row.prep_sheet || '',
+          };
+        });
+
+        return NextResponse.json(
+          { jobs, isMock: false, engine: 'supabase' },
+          {
+            headers: {
+              'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            },
+          }
+        );
       }
-    );
+    } catch (err) {
+      console.error('Supabase fetch failed:', err);
+    }
   }
 
+  // 2. Secondary Local Engine: data/canonical_applications.json
   try {
-    const response = await notion.dataSources.query({
-      data_source_id: process.env.NOTION_DATABASE_ID!,
-      sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
-      page_size: 100,
-    });
+    const localPath = path.join(process.cwd(), 'data', 'canonical_applications.json');
+    if (fs.existsSync(localPath)) {
+      const raw = fs.readFileSync(localPath, 'utf-8');
+      const rows = JSON.parse(raw);
+      if (Array.isArray(rows) && rows.length > 0) {
+          const jobs = rows.map((row) => {
+            const comp = cleanDisplayCompany(row.company);
+            const scamCheck = heuristicScamCheck(comp);
+            return {
+              id: String(row.id),
+              company: comp,
+              role: row.role || 'Candidate / Intern',
+              status: row.status || 'Applied',
+              platform: row.platform || 'Direct Email',
+              date: row.applied_date ? String(row.applied_date).split('T')[0] : '',
+              oa_link: row.application_link || null,
+              scam_risk: scamCheck?.scam_risk || row.scam_risk || 'Low',
+              risk_notes: scamCheck?.risk_notes || row.risk_notes || '',
+              prep_sheet: row.prep_sheet || '',
+            };
+          });
 
-    const jobs = (response.results as Array<Record<string, unknown>>).map((page) => {
-      const rawCompany = extractProp(page, 'Company', 'title') ?? extractProp(page, 'company', 'title') ?? 'Unknown';
-      const company = cleanDisplayCompany(rawCompany);
-      const scamCheck = heuristicScamCheck(company);
-      const notes = extractProp(page, 'Notes', 'rich_text') ?? '';
-
-      let scamRisk = scamCheck?.scam_risk ?? 'Low';
-      let riskNotes = scamCheck?.risk_notes ?? '';
-
-      if (!scamCheck) {
-        const riskMatch = notes.match(/\[(HIGH|MEDIUM|LOW) RISK:\s*([^\]]+)\]/i);
-        if (riskMatch) {
-          scamRisk = riskMatch[1].charAt(0).toUpperCase() + riskMatch[1].slice(1).toLowerCase();
-          riskNotes = riskMatch[2].trim();
+          return NextResponse.json(
+            { jobs, isMock: false, engine: 'local_storage' },
+            {
+              headers: {
+                'Cache-Control': 'no-store, no-cache, must-revalidate',
+              },
+            }
+          );
         }
       }
-
-      return {
-        id: (page.id as string) ?? '',
-        company,
-        role:       extractProp(page, 'Role', 'rich_text') ?? extractProp(page, 'role', 'rich_text') ?? 'Unknown',
-        status:     extractProp(page, 'Status', 'select') ?? 'Applied',
-        platform:   extractProp(page, 'Platform', 'select') ?? 'Unknown',
-        date:       extractProp(page, 'Date Applied', 'date') ?? (typeof page.created_time === 'string' ? page.created_time.split('T')[0] : ''),
-        oa_link:    extractProp(page, 'OA Link', 'url'),
-        scam_risk:  scamRisk,
-        risk_notes: riskNotes,
-        prep_sheet: extractProp(page, 'Prep Sheet', 'rich_text') ?? '',
-      };
-    });
-
-    return NextResponse.json(
-      { jobs, isMock: false },
-      {
-        headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-        },
-      }
-    );
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('Notion API error:', message);
-    return NextResponse.json({ jobs: getMockData(), isMock: true, error: message });
+  } catch (fileErr) {
+    console.warn('Local fallback file read failed:', fileErr);
   }
+
+  // 3. Fallback Demo Mode
+  return NextResponse.json(
+    { jobs: getMockData(), isMock: true, engine: 'demo' },
+    {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      },
+    }
+  );
 }
 
 function getMockData() {
@@ -168,4 +166,3 @@ function getMockData() {
     return job;
   });
 }
-

@@ -1,6 +1,6 @@
 # Intern Pulse (Web Dashboard) 🌌
 
-A premium, glassmorphic Next.js web application designed to visualize and manage your job and internship application pipeline. Powered by Google Gemini and Notion integrations, it provides automated tracking, scam detection, and prep sheets.
+A premium, glassmorphic Next.js web application designed to visualize and manage your job and internship application pipeline. Powered by Google Gemini and Supabase PostgreSQL, it provides automated tracking, scam detection, and prep sheets.
 
 ---
 
@@ -11,13 +11,14 @@ A premium, glassmorphic Next.js web application designed to visualize and manage
 - **🔬 Job Safety Scanner**: Flag high-risk job opportunities using community reports and AI safety reviews.
 - **⚡ AI Prep Sheets**: View tailored study resources and anticipated interview questions directly inside the job card details.
 - **🚀 Kanban Board & Hub**: Organize applications across pipeline stages (Kanban) and access central AI insights in dedicated views.
-- **🔌 Zero-Config Demo Mode**: Automatically falls back to high-fidelity mock data if Notion environment variables are not set.
+- **🔌 Zero-Config Demo Mode**: Automatically falls back to high-fidelity local data if Supabase environment variables are not set.
 
 ---
 
 ## 🛠️ Tech Stack
 
 - **Framework**: Next.js (App Router, Turbopack)
+- **Database**: Supabase Cloud PostgreSQL (@supabase/supabase-js)
 - **Runtime**: React 19 / TypeScript
 - **Styling**: TailwindCSS & Custom CSS Globals
 - **Animations**: Framer Motion
@@ -36,10 +37,10 @@ npm install
 ```
 
 ### 2. Configure Environment Variables
-Create a `.env.local` file in the `web/` directory and populate your Notion API details:
+Create a `.env.local` file in the `web/` directory and populate your Supabase details:
 ```env
-NOTION_API_KEY=your_notion_api_key
-NOTION_DATABASE_ID=your_notion_database_id
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_public_key
 ```
 
 ### 3. Run Development Server

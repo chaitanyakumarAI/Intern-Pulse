@@ -29,7 +29,7 @@ else:
 # ── 2. Required packages ──────────────────────────────────────────────────────
 required = [
     "google.auth", "googleapiclient", "google_auth_oauthlib",
-    "notion_client", "dotenv", "pandas", "requests",
+    "dotenv", "pandas", "requests",
     "openai", "bs4",
 ]
 
@@ -53,15 +53,14 @@ try:
     print(f"  ✓  config loaded from {config.ROOT_DIR}")
 
     checks = {
-        "NOTION_API_KEY":    config.NOTION_API_KEY,
-        "NOTION_DATABASE_ID": config.NOTION_DATABASE_ID,
+        "SUPABASE_URL":      config.SUPABASE_URL,
         "OPENAI_API_KEY":    config.OPENAI_API_KEY,
         "TELEGRAM_BOT_TOKEN": config.TELEGRAM_BOT_TOKEN,
         "TELEGRAM_CHAT_ID":  config.TELEGRAM_CHAT_ID,
     }
     for key, val in checks.items():
         if not val or val.startswith("your_"):
-            print(f"  ⚠  {key} is NOT set")
+            print(f"  ⚠  {key} is NOT set (SQLite fallback will be used if db)")
         else:
             print(f"  ✓  {key} = {val[:8]}…")
 except Exception as e:
@@ -79,7 +78,7 @@ else:
 # ── 5. Keyword classifier (offline) ──────────────────────────────────────────
 print("\nTesting keyword classifier (offline)…")
 try:
-    from status_classifier import classify_email_ai
+    from status_classifier import _keyword_classify
     dummy = {
         "subject":  "Congratulations! You have received an offer from Acme Corp",
         "body":     "We are pleased to offer you the position of Software Engineer Intern.",
@@ -87,24 +86,23 @@ try:
         "email_id": "test123",
         "date_iso": "2024-01-01T00:00:00.000Z",
     }
-    result = classify_email_ai(dummy)
-    print(f"  ✓  Classifier result: {result}")
+    result = _keyword_classify(dummy)
+    print(f"  ✓  Classifier result: {result['status']} @ {result['company']}")
 except Exception as e:
     print(f"  ✗  Classifier error: {e}")
 
-# ── 6. Notion connectivity (optional) ─────────────────────────────────────────
-print("\nTesting Notion connectivity…")
+# ── 6. Database connectivity ──────────────────────────────────────────────────
+print("\nTesting Database connectivity…")
 try:
-    import config as _cfg2
-    if _cfg2.NOTION_API_KEY and not _cfg2.NOTION_API_KEY.startswith("your_"):
-        from notion_client import Client
-        client = Client(auth=_cfg2.NOTION_API_KEY)
-        me = client.users.me()
-        print(f"  ✓  Notion connected as: {me.get('name', me.get('id', '?'))}")
+    import db_manager
+    apps = db_manager.get_all_applications()
+    sb = db_manager._get_supabase_config()
+    if sb:
+        print(f"  ✓  Supabase connected! Found {len(apps)} applications.")
     else:
-        print("  ⚠  Skipped (NOTION_API_KEY not set)")
+        print(f"  ✓  SQLite fallback active (data/jobs.db). Found {len(apps)} applications.")
 except Exception as e:
-    print(f"  ✗  Notion error: {e}")
+    print(f"  ✗  Database error: {e}")
 
 # ── 7. Telegram connectivity (optional) ──────────────────────────────────────
 print("\nTesting Telegram connectivity…")

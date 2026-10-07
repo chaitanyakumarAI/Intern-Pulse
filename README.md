@@ -65,7 +65,7 @@ Your Gmail Inbox
        ├──→ company_researcher.py  ← DuckDuckGo + Gemini scam analysis
        │
        ▼
-  notion_updater.py      ← Create/update row in Notion (deduplication built-in)
+  db_manager.py          ← Universal DB manager (Supabase PostgREST + SQLite)
        │
        ▼
   telegram_notifier.py   ← Rich HTML alert to your Telegram
@@ -78,7 +78,7 @@ Your Gmail Inbox
 
 ## 🚀 Setup Guide
 
-> Follow these steps carefully. The whole setup takes about 15 minutes.
+> Follow these steps carefully. The whole setup takes about 10 minutes.
 
 ### Step 1 — Prerequisites
 
@@ -86,7 +86,7 @@ Make sure you have:
 - **Python 3.12+** → [Download](https://python.org/downloads)
 - **Git** → [Download](https://git-scm.com)
 - A **Google Account** (the Gmail you want to monitor)
-- A **Notion account** → [notion.so](https://notion.so)
+- A **Supabase account** (free) → [supabase.com](https://supabase.com)
 - A **Telegram account**
 
 ---
@@ -119,10 +119,13 @@ pip install -r requirements.txt
 2. Click **Get API Key** → **Create API Key**
 3. Copy the key — it looks like `AIzaSy...`
 
-#### 🟣 Notion
-1. Go to [notion.so/my-integrations](https://www.notion.so/my-integrations)
-2. Click **New Integration** → give it a name (e.g., `InternPulse`) → **Submit**
-3. Copy the **Internal Integration Token** (starts with `secret_...`)
+#### 🟢 Supabase Database
+1. Go to [supabase.com](https://supabase.com) and create a free project (e.g., `InternPulse`)
+2. In your Supabase Dashboard, open **SQL Editor** → **New Query**
+3. Paste the contents of `supabase_schema.sql` and click **Run**
+4. Go to **Project Settings** → **API**:
+   - Copy **Project URL** (`https://xyz.supabase.co`)
+   - Copy **service_role secret** (or `anon public` key)
 
 #### 🔵 Telegram Bot
 1. Open Telegram and search for **@BotFather**
@@ -154,9 +157,9 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-# Notion
-NOTION_API_KEY=secret_xxxxxxxxxxxxxxxxxxxx
-NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Supabase
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_supabase_service_role_or_anon_key
 
 # Google Gemini
 GEMINI_API_KEY=AIzaSy...
@@ -168,33 +171,15 @@ TELEGRAM_CHAT_ID=123456789
 
 ---
 
-### Step 5 — Set Up Notion Database
+### Step 5 — Seed / Migrate Database
 
-Run the automated setup script which creates the database for you:
+Run the migration script to seed your database with existing tracked applications:
 
 ```bash
-python setup_notion_db.py
+python migrate_notion_to_supabase.py
 ```
 
-> **Don't forget:** After the script runs, open Notion, find your new database, click the **•••** menu → **Connect to** → select your integration.
-
-**Or create it manually** with these exact property names:
-
-| Property | Type | Notes |
-|---|---|---|
-| Company | **Title** | Primary field |
-| Role | Text | |
-| Status | Select | Applied, Under Review, OA Sent, Interview Scheduled, Rejected, Offer, Ghosted |
-| Email ID | Text | Used to detect duplicates |
-| Sender | Text | |
-| Subject | Text | |
-| Date Received | Date | |
-| OA Link | URL | |
-| Notes | Text | AI reasoning |
-| Last Updated | Date | |
-| Scam Risk | Select | High, Medium, Low |
-| Risk Notes | Text | AI scam analysis |
-| Prep Sheet | Text | Interview prep content |
+> **Zero-Config Fallback:** If `SUPABASE_URL` is not yet configured, the system automatically uses a high-performance local SQLite database (`data/jobs.db`).
 
 ---
 
@@ -293,12 +278,12 @@ npm run dev
 # Open http://localhost:3000
 ```
 
-**Set the Notion credentials for the dashboard:**
+**Set the Supabase credentials for the dashboard:**
 
 Create `web/.env.local`:
 ```env
-NOTION_API_KEY=secret_xxxxxxxxxxxxxxxxxxxx
-NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_public_key
 ```
 
 ### Dashboard Pages
@@ -318,21 +303,24 @@ AI-Internship-Tracker/
 │
 ├── 🐍 Python Backend
 │   ├── main.py                 # Pipeline orchestrator (quota-enforced entry point)
+│   ├── db_manager.py           # Universal Supabase & SQLite database manager
 │   ├── sync_quota.py           # Daily sync quota manager & calendar rollover
 │   ├── scheduler.py            # On-demand quota-checked sync runner
+│   ├── server.py               # Render web worker with health check server
 │   ├── gmail_reader.py         # Gmail OAuth2 + email fetching & parsing
 │   ├── status_classifier.py    # Gemini AI + keyword fallback classifier
 │   ├── company_researcher.py   # AI scam detection & interview prep generator
-│   ├── notion_updater.py       # Notion database upsert with deduplication
+│   ├── threat_detector.py      # Multi-layer scam & certificate mill threat engine
 │   ├── telegram_notifier.py    # Rich HTML Telegram message builder & sender
 │   ├── telegram_bot.py         # 2-way interactive Telegram bot command runner
 │   ├── email_history.py        # Processed email cache (prevents duplicates)
-│   ├── dashboard.py            # Fetches Notion rows for the web UI API
+│   ├── dashboard.py            # CLI pipeline dashboard & stats
 │   ├── config.py               # All env vars, logging setup, constants
 │   └── utils.py                # Shared helpers: retry, HTML parser, hashing
 │
-├── 🛠️ Utilities
-│   ├── setup_notion_db.py      # Auto-creates Notion database schema
+├── 🛠️ Utilities & Database
+│   ├── supabase_schema.sql     # PostgreSQL schema, triggers & RLS policies
+│   ├── migrate_notion_to_supabase.py # One-time migration & seed utility
 │   ├── reprocess.py            # Wipes cache & reprocesses last 100 emails
 │   ├── test_setup.py           # Smoke test for your environment setup
 │   └── test_integration.py     # Full integration test suite (31 tests)

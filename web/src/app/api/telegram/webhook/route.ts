@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { Client } from '@notionhq/client';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 const STATUS_MAP: Record<string, string> = {
@@ -53,63 +52,42 @@ async function sendTelegramMessage(chatId: number, text: string) {
   });
 }
 
-function extractProp(page: Record<string, unknown>, name: string, type: 'title' | 'rich_text' | 'select' | 'date'): string {
-  const props = page.properties as Record<string, Record<string, unknown>> | undefined;
-  const p = props?.[name] ?? props?.[name.toLowerCase()];
-  if (!p) return '';
-  if (type === 'title') {
-    const arr = p.title as Array<{ plain_text?: string }> | undefined;
-    return arr?.[0]?.plain_text || '';
-  }
-  if (type === 'rich_text') {
-    const arr = p.rich_text as Array<{ plain_text?: string }> | undefined;
-    return arr?.[0]?.plain_text || '';
-  }
-  if (type === 'select') {
-    const sel = p.select as { name?: string } | undefined;
-    return sel?.name || '';
-  }
-  if (type === 'date') {
-    const d = p.date as { start?: string } | undefined;
-    return d?.start || '';
-  }
-  return '';
-}
-
-// Find a job in Notion by fuzzy company name matching
+// Find a job by fuzzy company name matching
 async function findJobByCompany(companyName: string) {
-  if (!process.env.NOTION_DATABASE_ID) return null;
+  if (!isSupabaseConfigured || !supabase) return null;
 
-  const response = await notion.dataSources.query({
-    data_source_id: process.env.NOTION_DATABASE_ID,
-    sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
-    page_size: 50,
-  });
+  const { data } = await supabase
+    .from('applications')
+    .select('id, company, role, status')
+    .order('last_checked', { ascending: false })
+    .limit(50);
 
+  if (!data) return null;
   const searchStr = companyName.toLowerCase().trim();
 
   // 1. Exact match
-  for (const page of response.results as Array<Record<string, unknown>>) {
-    const titleProp = extractProp(page, 'Company', 'title');
-    if (titleProp.toLowerCase().trim() === searchStr) {
+  for (const row of data) {
+    if (row.company && row.company.toLowerCase().trim() === searchStr) {
       return {
-        id: (page.id as string) ?? '',
-        company: titleProp,
-        role: extractProp(page, 'Role', 'rich_text'),
-        currentStatus: extractProp(page, 'Status', 'select'),
+        id: String(row.id),
+        company: row.company,
+        role: row.role || 'Candidate / Intern',
+        currentStatus: row.status || 'Applied',
       };
     }
   }
 
   // 2. Substring match
-  for (const page of response.results as Array<Record<string, unknown>>) {
-    const titleProp = extractProp(page, 'Company', 'title');
-    if (titleProp.toLowerCase().includes(searchStr) || searchStr.includes(titleProp.toLowerCase())) {
+  for (const row of data) {
+    if (
+      row.company &&
+      (row.company.toLowerCase().includes(searchStr) || searchStr.includes(row.company.toLowerCase()))
+    ) {
       return {
-        id: (page.id as string) ?? '',
-        company: titleProp,
-        role: extractProp(page, 'Role', 'rich_text'),
-        currentStatus: extractProp(page, 'Status', 'select'),
+        id: String(row.id),
+        company: row.company,
+        role: row.role || 'Candidate / Intern',
+        currentStatus: row.status || 'Applied',
       };
     }
   }
@@ -118,41 +96,42 @@ async function findJobByCompany(companyName: string) {
 }
 
 async function fetchRecentJobs(limit = 8) {
-  if (!process.env.NOTION_DATABASE_ID) return [];
+  if (!isSupabaseConfigured || !supabase) return [];
 
-  const response = await notion.dataSources.query({
-    data_source_id: process.env.NOTION_DATABASE_ID,
-    sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
-    page_size: Math.min(limit, 15),
-  });
+  const { data } = await supabase
+    .from('applications')
+    .select('id, company, role, status, applied_date')
+    .order('last_checked', { ascending: false })
+    .limit(Math.min(limit, 20));
 
-  return (response.results as Array<Record<string, unknown>>).map((page) => ({
-    id: (page.id as string) ?? '',
-    company: extractProp(page, 'Company', 'title') || 'Unknown',
-    role: extractProp(page, 'Role', 'rich_text') || 'Role unspecified',
-    status: extractProp(page, 'Status', 'select') || 'Applied',
-    date: extractProp(page, 'Date Applied', 'date'),
+  if (!data) return [];
+
+  return data.map((r) => ({
+    id: String(r.id),
+    company: r.company || 'Unknown',
+    role: r.role || 'Role unspecified',
+    status: r.status || 'Applied',
+    date: r.applied_date ? String(r.applied_date).split('T')[0] : '',
   }));
 }
 
 async function fetchPipelineStats() {
-  if (!process.env.NOTION_DATABASE_ID) return null;
+  if (!isSupabaseConfigured || !supabase) return null;
 
-  const response = await notion.dataSources.query({
-    data_source_id: process.env.NOTION_DATABASE_ID,
-    sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
-    page_size: 100,
-  });
+  const { data } = await supabase
+    .from('applications')
+    .select('status')
+    .limit(200);
+
+  if (!data) return null;
 
   const counts: Record<string, number> = {};
-  const results = response.results as Array<Record<string, unknown>>;
-
-  for (const page of results) {
-    const s = extractProp(page, 'Status', 'select') || 'Applied';
+  for (const row of data) {
+    const s = row.status || 'Applied';
     counts[s] = (counts[s] || 0) + 1;
   }
 
-  const total = results.length;
+  const total = data.length;
   const applied = counts['Applied'] || 0;
   const review = counts['Under Review'] || 0;
   const oas = counts['OA Sent'] || 0;
@@ -192,18 +171,16 @@ export async function POST(req: Request) {
         '⚡ <b>InternPulse AI Bot — Command Center</b>\n\n' +
         'Here are the commands you can use:\n\n' +
         '🔄 <b>/status &lt;Company&gt; &lt;Status&gt;</b>\n' +
-        '<i>Update application stage in Notion.</i>\n' +
+        '<i>Update application stage in database.</i>\n' +
         'Examples:\n' +
         '  • <code>/status Google Interview</code>\n' +
         '  • <code>/status Microsoft Offer</code>\n' +
         '  • <code>/status Amazon OA</code>\n' +
         '  • <code>/status Meta Rejected</code>\n\n' +
         '📋 <b>/list [limit]</b>\n' +
-        '<i>View your latest applications and stages.</i>\n\n' +
+        '<i>View your recent applications and current stages.</i>\n\n' +
         '📊 <b>/stats</b>\n' +
-        '<i>View pipeline velocity and response rate.</i>\n\n' +
-        '⏱️ <b>/quota</b>\n' +
-        '<i>Check daily Gmail sync quota limit.</i>\n\n' +
+        '<i>View active pipeline breakdown and response velocity.</i>\n\n' +
         '❓ <b>/help</b> — Show this command reference.';
       await sendTelegramMessage(chatId, helpMsg);
     } else if (cmdToken === '/status' || cmdToken === '/update') {
@@ -211,8 +188,10 @@ export async function POST(req: Request) {
       if (parts.length < 2) {
         await sendTelegramMessage(
           chatId,
-          '⚠️ <b>Usage:</b> <code>/status &lt;Company&gt; &lt;Status&gt;</code>\n' +
-          'Example: <code>/status Google Interview</code>'
+          '⚠️ <b>Usage:</b> <code>/status &lt;Company&gt; &lt;Status&gt;</code>\n\n' +
+          'Examples:\n' +
+          '  • <code>/status Google Interview</code>\n' +
+          '  • <code>/status Microsoft Offer</code>'
         );
         return NextResponse.json({ ok: true });
       }
@@ -221,11 +200,11 @@ export async function POST(req: Request) {
       let targetStatus = '';
 
       const joinedLower = parts.join(' ').toLowerCase();
-      for (const [rawKey, canon] of Object.entries(STATUS_MAP)) {
-        if (joinedLower.endsWith(rawKey)) {
+      for (const [key, canon] of Object.entries(STATUS_MAP)) {
+        if (joinedLower.endsWith(key)) {
           targetStatus = canon;
-          const suffixWordCount = rawKey.split(' ').length;
-          companyInput = parts.slice(0, parts.length - suffixWordCount).join(' ');
+          const keyWordsCount = key.split(' ').length;
+          companyInput = parts.slice(0, parts.length - keyWordsCount).join(' ');
           break;
         }
       }
@@ -253,13 +232,16 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
 
-      // Update Notion
-      await notion.pages.update({
-        page_id: job.id,
-        properties: {
-          'Status': { select: { name: targetStatus } },
-        },
-      });
+      // Update in Supabase
+      if (isSupabaseConfigured && supabase) {
+        await supabase
+          .from('applications')
+          .update({
+            status: targetStatus,
+            last_checked: new Date().toISOString(),
+          })
+          .eq('id', job.id);
+      }
 
       const emoji = STATUS_EMOJI[targetStatus] || '✅';
       await sendTelegramMessage(
@@ -268,13 +250,13 @@ export async function POST(req: Request) {
         `🏢 <b>Company:</b> ${job.company}\n` +
         (job.role ? `💼 <b>Role:</b> ${job.role}\n` : '') +
         `🔄 <b>Stage:</b> <s>${job.currentStatus || 'Applied'}</s> ➔ <b>${targetStatus}</b>\n\n` +
-        '<i>Synchronized live with Notion database.</i>'
+        '<i>Synchronized live with database.</i>'
       );
     } else if (cmdToken === '/list' || cmdToken === '/pipeline' || cmdToken === '/jobs') {
       const limit = parseInt(argsText, 10) || 8;
       const jobs = await fetchRecentJobs(limit);
       if (!jobs || jobs.length === 0) {
-        await sendTelegramMessage(chatId, '📋 No applications found in Notion database.');
+        await sendTelegramMessage(chatId, '📋 No applications found in database.');
         return NextResponse.json({ ok: true });
       }
 
@@ -292,41 +274,32 @@ export async function POST(req: Request) {
     } else if (cmdToken === '/stats' || cmdToken === '/metrics') {
       const stats = await fetchPipelineStats();
       if (!stats) {
-        await sendTelegramMessage(chatId, '📊 Could not calculate metrics from Notion.');
+        await sendTelegramMessage(chatId, '📊 Could not calculate metrics from database.');
         return NextResponse.json({ ok: true });
       }
 
       const msg =
         '📊 <b>Career Pipeline Velocity</b>\n\n' +
-        `📁 <b>Total Tracked:</b> ${stats.total}\n` +
-        `📝 <b>Applied:</b> ${stats.applied}\n` +
-        `🔍 <b>Under Review:</b> ${stats.review}\n` +
-        `💻 <b>OA Assessments:</b> ${stats.oas}\n` +
-        `🎯 <b>Interviews:</b> ${stats.interviews}\n` +
-        `🎉 <b>Offers:</b> ${stats.offers}\n` +
-        `❌ <b>Rejected:</b> ${stats.rejected}\n\n` +
-        `🚀 <b>Response Rate:</b> <b>${stats.responseRate}%</b>`;
+        `📥 <b>Total Applications:</b> ${stats.total}\n` +
+        `📝 <b>Awaiting Review:</b> ${stats.applied}\n` +
+        `🔍 <b>In Progress / Review:</b> ${stats.review}\n` +
+        `💻 <b>Online Assessments:</b> ${stats.oas}\n` +
+        `🎯 <b>Interviews Scheduled:</b> ${stats.interviews}\n` +
+        `🎉 <b>Offers Extended:</b> ${stats.offers}\n` +
+        `❌ <b>Rejections:</b> ${stats.rejected}\n\n` +
+        `📈 <b>Positive Response Rate:</b> <b>${stats.responseRate}%</b>\n\n` +
+        '<i>Use <code>/list</code> to see recent updates or <code>/status &lt;Co&gt; &lt;Stage&gt;</code> to advance.</i>';
       await sendTelegramMessage(chatId, msg);
-    } else if (cmdToken === '/quota' || cmdToken === '/limit') {
-      const dailyLimit = parseInt(process.env.DAILY_SYNC_LIMIT || '5', 10);
-      const quotaMsg =
-        '⏱️ <b>Daily Gmail Sync Quota</b>\n\n' +
-        `<b>Daily Limit:</b> ${dailyLimit} syncs/day\n` +
-        '<b>Resets At:</b> 00:00 UTC\n\n' +
-        '<i>To trigger an inbox sync, visit your InternPulse Dashboard or run the desktop engine.</i>';
-      await sendTelegramMessage(chatId, quotaMsg);
     } else {
       await sendTelegramMessage(
         chatId,
-        `👋 Welcome to <b>InternPulse Bot</b>.\n\n` +
-        `Unrecognized command: <code>${text}</code>\n` +
-        'Send <code>/help</code> to see available commands.'
+        `❓ Unrecognized command: <code>${text}</code>\nSend <code>/help</code> for available commands.`
       );
     }
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error('Telegram Webhook Error:', err);
-    return NextResponse.json({ error: 'Server error' }, { status: 500 });
+  } catch (error) {
+    console.error('Telegram webhook processing error:', error);
+    return NextResponse.json({ ok: false }, { status: 500 });
   }
 }

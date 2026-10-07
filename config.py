@@ -38,7 +38,15 @@ def setup_logging(name: str = "ai-job-tracker") -> logging.Logger:
     return logging.getLogger(name)
 
 
-# ── Notion ───────────────────────────────────────────────────────────────────
+# ── Supabase ─────────────────────────────────────────────────────────────────
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY: str = (
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    or os.getenv("SUPABASE_KEY", "")
+    or os.getenv("SUPABASE_ANON_KEY", "")
+)
+
+# ── Notion (Legacy / Optional) ───────────────────────────────────────────────
 NOTION_API_KEY: str = os.getenv("NOTION_API_KEY", "")
 NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID", "")
 
@@ -138,14 +146,17 @@ def _key_status(val: str, prefix: str = "your_") -> str:
 def print_startup_diagnostics() -> None:
     """Print a clean startup banner showing all service statuses."""
     gemini_status   = _key_status(GEMINI_API_KEY)
-    notion_status   = _key_status(NOTION_API_KEY)
+    supabase_status = _key_status(SUPABASE_URL)
     telegram_status = _key_status(TELEGRAM_BOT_TOKEN)
 
     logger = logging.getLogger("config")
     logger.info("=" * 60)
     logger.info("INTERN PULSE — STARTUP DIAGNOSTICS")
     logger.info("=" * 60)
-    logger.info("  Notion     : %s", notion_status)
+    if supabase_status == "NOT SET":
+        logger.info("  Database   : Local SQLite Engine (data/jobs.db)")
+    else:
+        logger.info("  Database   : Supabase Cloud (%s)", supabase_status)
     logger.info("  Gemini     : %s", gemini_status)
     logger.info("  Telegram   : %s", telegram_status)
     logger.info("  Gmail creds: %s", "FOUND" if GMAIL_CREDENTIALS_FILE.exists() else "MISSING")

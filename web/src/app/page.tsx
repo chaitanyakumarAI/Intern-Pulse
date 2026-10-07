@@ -688,7 +688,7 @@ export default function Dashboard() {
             SYNCHRONIZED ECOSYSTEM:
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            {['Gmail API', 'LinkedIn Jobs', 'Greenhouse', 'Lever', 'Workday', 'Ashby', 'Notion HQ'].map((partner) => (
+            {['Gmail API', 'LinkedIn Jobs', 'Greenhouse', 'Lever', 'Workday', 'Ashby', 'Supabase Cloud'].map((partner) => (
               <span
                 key={partner}
                 style={{
@@ -1021,7 +1021,7 @@ export default function Dashboard() {
               onClick={() => {
                 setLoading(true);
                 void fetchJobs();
-                setScanMessage('Workspace refreshed from Notion.');
+                setScanMessage('Workspace refreshed from cloud database.');
                 setTimeout(() => setScanMessage(null), 3000);
               }}
               className="btn-ghost"

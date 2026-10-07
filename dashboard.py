@@ -71,32 +71,13 @@ _STATUS_CONFIG = {
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
 def fetch_all_rows() -> list[dict]:
-    """Pull every row from Notion via data_sources.query with pagination."""
-    from notion_client import Client
-    client = Client(auth=config.NOTION_API_KEY)
-    db_id  = config.NOTION_DATABASE_ID
-    results = []
-    cursor  = None
-
-    while True:
-        kwargs = {}
-        if cursor:
-            kwargs["start_cursor"] = cursor
-        try:
-            resp = client.data_sources.query(db_id, **kwargs)
-        except Exception as exc:
-            logger.error("Notion query failed: %s", exc)
-            break
-        results.extend(resp.get("results", []))
-        if not resp.get("has_more"):
-            break
-        cursor = resp.get("next_cursor")
-
-    return results
+    """Pull all applications from Supabase (or SQLite fallback via db_manager)."""
+    from db_manager import get_all_applications
+    return get_all_applications()
 
 
 def _get_prop(row: dict, name: str, prop_type: str) -> str:
-    """Safely extract a property value from a Notion page dict."""
+    """Safely extract a property value from a Notion page dict (legacy)."""
     try:
         prop = row["properties"][name]
         if prop_type == "title":
@@ -119,20 +100,36 @@ def _get_prop(row: dict, name: str, prop_type: str) -> str:
 
 
 def parse_rows(rows: list[dict]) -> list[dict]:
-    """Convert raw Notion rows to clean dicts."""
+    """Standardize application rows for dashboard rendering."""
     apps = []
     for row in rows:
-        apps.append({
-            "id":            row.get("id", ""),
-            "company":       _get_prop(row, "Company", "title"),
-            "role":          _get_prop(row, "Role", "rich_text"),
-            "status":        _get_prop(row, "Status", "select"),
-            "platform":      _get_prop(row, "Platform", "select"),
-            "applied_date":  _get_prop(row, "Applied Date", "date"),
-            "last_checked":  _get_prop(row, "Last Checked", "date"),
-            "app_link":      _get_prop(row, "Application Link", "url"),
-            "notes":         _get_prop(row, "Notes", "rich_text"),
-        })
+        if "properties" in row:
+            # Legacy Notion format
+            apps.append({
+                "id":            row.get("id", ""),
+                "company":       _get_prop(row, "Company", "title"),
+                "role":          _get_prop(row, "Role", "rich_text"),
+                "status":        _get_prop(row, "Status", "select"),
+                "platform":      _get_prop(row, "Platform", "select"),
+                "applied_date":  _get_prop(row, "Applied Date", "date"),
+                "last_checked":  _get_prop(row, "Last Checked", "date"),
+                "app_link":      _get_prop(row, "Application Link", "url"),
+                "notes":         _get_prop(row, "Notes", "rich_text"),
+            })
+        else:
+            # Modern Supabase / db_manager format
+            apps.append({
+                "id":            row.get("id", ""),
+                "company":       row.get("company", ""),
+                "role":          row.get("role", ""),
+                "status":        row.get("status", "Applied"),
+                "platform":      row.get("platform", "Direct Email"),
+                "applied_date":  row.get("applied_date", ""),
+                "last_checked":  row.get("last_checked", ""),
+                "app_link":      row.get("application_link", ""),
+                "notes":         row.get("notes", ""),
+                "scam_risk":     row.get("scam_risk", "Low"),
+            })
     return apps
 
 
@@ -154,7 +151,7 @@ def _pct(value: int, total: int) -> str:
 def print_full_dashboard(apps: list[dict]) -> None:
     total = len(apps)
     if total == 0:
-        print(_c("\n  No applications found in Notion database.\n", "yellow"))
+        print(_c("\n  No applications found in database.\n", "yellow"))
         return
 
     status_counts   = Counter(a["status"] for a in apps)
@@ -314,15 +311,11 @@ def main() -> None:
     parser.add_argument("--json",    action="store_true", help="JSON output")
     args = parser.parse_args()
 
-    if not config.NOTION_API_KEY or config.NOTION_API_KEY.startswith("your_"):
-        print("ERROR: NOTION_API_KEY not set in .env")
-        sys.exit(1)
-
-    print(_c("Fetching data from Notion...", "dim"), end="\r")
+    print(_c("Fetching applications from database...", "dim"), end="\r")
     try:
         rows = fetch_all_rows()
     except Exception as exc:
-        print(f"ERROR: Could not connect to Notion: {exc}")
+        print(f"ERROR: Could not fetch applications: {exc}")
         sys.exit(1)
 
     apps = parse_rows(rows)

@@ -27,12 +27,11 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import requests
-from notion_client import Client
-from notion_client.errors import APIResponseError
 
 import config
 from config import setup_logging
 from sync_quota import can_sync, get_quota, record_sync
+import db_manager
 
 logger = setup_logging("telegram_bot")
 
@@ -74,16 +73,6 @@ STATUS_EMOJI: dict[str, str] = {
     "Ghosted":             "👻",
 }
 
-_notion_client: Optional[Client] = None
-
-def get_notion_client() -> Client:
-    global _notion_client
-    if _notion_client is None:
-        if not config.NOTION_API_KEY or config.NOTION_API_KEY.startswith("your_"):
-            raise EnvironmentError("NOTION_API_KEY is not configured in .env")
-        _notion_client = Client(auth=config.NOTION_API_KEY)
-    return _notion_client
-
 
 def send_tg_message(chat_id: str | int, text: str, parse_mode: str = "HTML") -> bool:
     """Send a Telegram message to a specific chat ID."""
@@ -117,121 +106,42 @@ def is_authorized(chat_id: str | int) -> bool:
     return actual == expected
 
 
-# ── Notion Helpers ─────────────────────────────────────────────────────────────
-
-def _get_title(page: dict, key: str = "Company") -> str:
-    props = page.get("properties", {})
-    prop = props.get(key) or props.get(key.lower()) or {}
-    parts = prop.get("title", [])
-    return parts[0].get("plain_text", "") if parts else ""
-
-
-def _get_rich_text(page: dict, key: str = "Role") -> str:
-    props = page.get("properties", {})
-    prop = props.get(key) or props.get(key.lower()) or {}
-    parts = prop.get("rich_text", [])
-    return parts[0].get("plain_text", "") if parts else ""
-
-
-def _get_select(page: dict, key: str = "Status") -> str:
-    props = page.get("properties", {})
-    prop = props.get(key) or props.get(key.lower()) or {}
-    sel = prop.get("select") or {}
-    return sel.get("name", "")
-
-
-def _get_date(page: dict, key: str = "Date Applied") -> str:
-    props = page.get("properties", {})
-    prop = props.get(key) or props.get("Applied Date") or {}
-    d = prop.get("date") or {}
-    return d.get("start", "") or page.get("created_time", "")[:10]
-
+# ── Database Helpers ──────────────────────────────────────────────────────────
 
 def find_job(company_query: str) -> Optional[dict]:
-    """Find a recent application matching company_query (case-insensitive substring)."""
-    client = get_notion_client()
-    db_id = config.NOTION_DATABASE_ID
-    if not db_id:
+    """Find a recent application matching company_query."""
+    match = db_manager.search_applications(company_query)
+    if not match:
         return None
-
-    try:
-        resp = client.data_sources.query(
-            db_id,
-            sorts=[{"timestamp": "last_edited_time", "direction": "descending"}],
-            page_size=50,
-        )
-        results = resp.get("results", [])
-        q = company_query.strip().lower()
-
-        # 1. Exact match
-        for page in results:
-            company = _get_title(page).strip().lower()
-            if company == q:
-                return {
-                    "id": page["id"],
-                    "company": _get_title(page),
-                    "role": _get_rich_text(page, "Role"),
-                    "status": _get_select(page, "Status"),
-                    "date": _get_date(page),
-                }
-
-        # 2. Substring match
-        for page in results:
-            company = _get_title(page).strip().lower()
-            if q in company or company in q:
-                return {
-                    "id": page["id"],
-                    "company": _get_title(page),
-                    "role": _get_rich_text(page, "Role"),
-                    "status": _get_select(page, "Status"),
-                    "date": _get_date(page),
-                }
-    except Exception as exc:
-        logger.error("Notion search failed for '%s': %s", company_query, exc)
-
-    return None
+    d = match.get("applied_date") or match.get("last_checked") or ""
+    return {
+        "id": match["id"],
+        "company": match.get("company", "Unknown"),
+        "role": match.get("role", "Role unspecified"),
+        "status": match.get("status", "Applied"),
+        "date": d[:10] if d else "",
+    }
 
 
 def fetch_recent_jobs(limit: int = 8) -> list[dict]:
-    """Fetch the latest applications from Notion."""
-    client = get_notion_client()
-    db_id = config.NOTION_DATABASE_ID
-    if not db_id:
-        return []
-
-    try:
-        resp = client.data_sources.query(
-            db_id,
-            sorts=[{"timestamp": "last_edited_time", "direction": "descending"}],
-            page_size=min(limit, 20),
-        )
-        items = []
-        for page in resp.get("results", []):
-            items.append({
-                "id": page["id"],
-                "company": _get_title(page) or "Unknown",
-                "role": _get_rich_text(page, "Role") or "Role unspecified",
-                "status": _get_select(page, "Status") or "Applied",
-                "date": _get_date(page),
-            })
-        return items
-    except Exception as exc:
-        logger.error("Failed to fetch recent jobs: %s", exc)
-        return []
+    """Fetch the latest applications from database."""
+    apps = db_manager.get_all_applications()
+    items = []
+    for app in apps[:limit]:
+        d = app.get("applied_date") or app.get("last_checked") or ""
+        items.append({
+            "id": app["id"],
+            "company": app.get("company", "Unknown"),
+            "role": app.get("role", "Role unspecified"),
+            "status": app.get("status", "Applied"),
+            "date": d[:10] if d else "",
+        })
+    return items
 
 
-def update_status_in_notion(page_id: str, new_status: str) -> bool:
-    """Update the status of a specific Notion page."""
-    client = get_notion_client()
-    try:
-        client.pages.update(
-            page_id=page_id,
-            properties={"Status": {"select": {"name": new_status}}},
-        )
-        return True
-    except Exception as exc:
-        logger.error("Failed to update status in Notion for %s: %s", page_id, exc)
-        return False
+def update_status_in_db(page_id: str, new_status: str) -> bool:
+    """Update the status of a specific application."""
+    return db_manager.update_application_status(page_id, new_status)
 
 
 # ── Command Handlers ──────────────────────────────────────────────────────────
@@ -241,7 +151,7 @@ def handle_help(chat_id: str | int) -> None:
         "⚡ <b>InternPulse AI Bot — Command Center</b>\n\n"
         "Here are the commands you can use:\n\n"
         "🔄 <b>/status &lt;Company&gt; &lt;Status&gt;</b>\n"
-        "<i>Update application stage in Notion.</i>\n"
+        "<i>Update application stage in database.</i>\n"
         "Examples:\n"
         "  • <code>/status Google Interview</code>\n"
         "  • <code>/status Microsoft Offer</code>\n"
@@ -326,18 +236,18 @@ def handle_status(chat_id: str | int, args_text: str) -> None:
         send_tg_message(chat_id, "⚠️ Please specify a company name. Example: <code>/status Google Offer</code>")
         return
 
-    send_tg_message(chat_id, f"🔍 Searching Notion for <b>{company_input}</b>...")
+    send_tg_message(chat_id, f"🔍 Searching database for <b>{company_input}</b>...")
     job = find_job(company_input)
     if not job:
         send_tg_message(
             chat_id,
-            f"❌ Could not find a recent application matching <b>{company_input}</b>.\n"
+            f"❌ Could not find an application matching <b>{company_input}</b>.\n"
             f"Use <code>/list</code> to verify company names in your pipeline."
         )
         return
 
     prev_status = job.get("status") or "Applied"
-    success = update_status_in_notion(job["id"], target_status)
+    success = update_status_in_db(job["id"], target_status)
     if success:
         emoji = STATUS_EMOJI.get(target_status, "✅")
         text = (
@@ -345,10 +255,10 @@ def handle_status(chat_id: str | int, args_text: str) -> None:
             f"🏢 <b>Company:</b> {job['company']}\n"
             f"💼 <b>Role:</b> {job['role']}\n"
             f"🔄 <b>Stage:</b> <s>{prev_status}</s> ➔ <b>{target_status}</b>\n\n"
-            f"<i>Synchronized live with Notion database.</i>"
+            f"<i>Synchronized live with cloud database.</i>"
         )
     else:
-        text = f"❌ Failed to update <b>{job['company']}</b> in Notion. Check API permissions."
+        text = f"❌ Failed to update <b>{job['company']}</b> in database. Check logs."
 
     send_tg_message(chat_id, text)
 
@@ -360,7 +270,7 @@ def handle_list(chat_id: str | int, args_text: str) -> None:
 
     jobs = fetch_recent_jobs(limit=limit)
     if not jobs:
-        send_tg_message(chat_id, "📋 No applications found in Notion database.")
+        send_tg_message(chat_id, "📋 No applications found in database.")
         return
 
     lines = [f"📋 <b>Active Applications ({len(jobs)} latest):</b>\n"]
