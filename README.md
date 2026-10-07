@@ -4,7 +4,7 @@
 
 ### An autonomous AI-powered internship tracking system
 
-*Reads your Gmail → Classifies with Gemini AI → Detects scam companies → Updates Notion → Alerts you on Telegram — all automatically, every 3 hours.*
+*Reads your Gmail → Classifies with Gemini AI → Detects scam companies → Updates Notion → Alerts you on Telegram — all automatically, with smart daily quota management.*
 
 <br/>
 
@@ -28,7 +28,7 @@ It silently monitors your Gmail inbox, uses Google Gemini AI to understand each 
 - Logs the application to your **Notion database**
 - Sends you a **Telegram alert** with company scam analysis and interview prep tips
 - Picks out the best **job opportunities** from digest emails (Internshala, LinkedIn, Unstop)
-- Runs **automatically every 3 hours** via GitHub Actions — no server, no cost
+- Runs **daily or on-demand** via GitHub Actions, Web Dashboard, and Telegram — respecting configurable daily sync quotas
 
 ---
 
@@ -44,7 +44,7 @@ It silently monitors your Gmail inbox, uses Google Gemini AI to understand each 
 | 📊 **Notion Dashboard** | Auto-creates rows, avoids duplicates, updates status as your application progresses |
 | 🔔 **Rich Telegram Alerts** | Beautifully formatted messages with emoji, company name, role, risk score, and prep tips |
 | 🌐 **Next.js Web Dashboard** | A cinematic dark-mode UI with Kanban board, funnel chart, activity timeline, and safety scanner |
-| ⏱️ **Fully Automated** | GitHub Actions runs the pipeline every 3 hours — no manual work after setup |
+| ⏱️ **Daily Quota & On-Demand** | Daily sync schedule with calendar rollover, quota protection, and instant web/Telegram triggers |
 
 ---
 
@@ -344,7 +344,7 @@ AI-Internship-Tracker/
 │       └── package.json
 │
 ├── ⚙️ Automation
-│   └── .github/workflows/tracker.yml   # GitHub Actions (runs every 3 hrs)
+│   └── .github/workflows/tracker.yml   # GitHub Actions (runs daily at 08:00 UTC or manual dispatch)
 │
 ├── .env.example                # Template — copy to .env and fill in keys
 ├── credentials.json            # Gmail OAuth client (never commit!)
