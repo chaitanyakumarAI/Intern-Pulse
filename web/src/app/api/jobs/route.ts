@@ -7,19 +7,45 @@ const SCAM_BLOCKLIST: Record<string, string> = {
   labmentix: "Known predatory platform offering fake or paid internship cert schemes.",
   bluestock: "Frequently flagged for deceptive internship offers, charging fees, or low educational value.",
   codsoft: "Flagged for sending generic certificate-based unpaid mass internship loops.",
-  octanet: "Known for mass automated unpaid internship programs with low educational value."
+  octanet: "Known for mass automated unpaid internship programs with low educational value.",
+  "oasis infobyte": "Mass automated certificate loop with low educational credibility.",
+  letsgrowmore: "Mass-generated certificate loop involving copy-paste beginner tasks.",
+  lgm: "Associated with LetsGrowMore automated certificate loops.",
+  "bharat intern": "Unpaid automated task loop offering certificates without verified corporate standing.",
+  motioncut: "Unpaid automated task loop with generic certificates.",
+  technohacks: "Reported for certificate-selling schemes and unpaid repetitive tasks.",
+  internpe: "Known generic task-loop portal offering automated certificates.",
+  vaultofcodes: "Automated unpaid task loops with minimal verification.",
+  zenotalent: "Reported on community forums for soliciting training fees after initial selection."
 };
 
 function heuristicScamCheck(companyName: string): { scam_risk: string; risk_notes: string } | null {
   const norm = companyName.toLowerCase().trim();
   for (const [key, val] of Object.entries(SCAM_BLOCKLIST)) {
-    // Use token / word boundaries so legitimate companies containing a substring aren't falsely flagged
     const regex = new RegExp(`(^|[\\s._,-])${key}([\\s._,-]|$)`, 'i');
-    if (regex.test(norm) || norm === key) {
+    if (regex.test(norm) || norm.replace(/\s+/g, '') === key.replace(/\s+/g, '')) {
       return { scam_risk: 'High', risk_notes: val };
     }
   }
   return null;
+}
+
+function cleanDisplayCompany(name: string): string {
+  if (!name) return 'Unknown';
+  let clean = name.trim();
+  clean = clean.replace(/^(?:Team\.|HR\s+|Updates\.|Em\.|Indiacampus\.|Workday\s+)/i, '');
+  clean = clean.replace(/\s+(?:Human Resources|Workday Notifications|Job Alerts|Careers|Recruiting|Talent Acquisition|Recruitment|Team|HR)$/i, '');
+  const lower = clean.toLowerCase();
+  if (lower.includes("l'oréal") || lower.includes("l'oreal") || lower.includes("loreal")) return "L'Oréal";
+  if (lower.includes("accenture")) return "Accenture";
+  if (lower.includes("applied materials")) return "Applied Materials";
+  if (lower.includes("bluestock")) return "Bluestock Fintech";
+  if (lower.includes("ge aerospace")) return "GE Aerospace";
+  if (lower.includes("electronic arts") || lower.startsWith("ea.")) return "Electronic Arts";
+  if (lower.includes("jpmorgan")) return "JPMorganChase";
+  if (lower.includes("csk")) return "CSK Technologies";
+  if (lower === "stuti") return "Abekus";
+  return clean;
 }
 
 function extractProp(page: Record<string, unknown>, name: string, type: string): string | null {
@@ -71,8 +97,21 @@ export async function GET() {
     });
 
     const jobs = (response.results as Array<Record<string, unknown>>).map((page) => {
-      const company = extractProp(page, 'Company', 'title') ?? extractProp(page, 'company', 'title') ?? 'Unknown';
+      const rawCompany = extractProp(page, 'Company', 'title') ?? extractProp(page, 'company', 'title') ?? 'Unknown';
+      const company = cleanDisplayCompany(rawCompany);
       const scamCheck = heuristicScamCheck(company);
+      const notes = extractProp(page, 'Notes', 'rich_text') ?? '';
+
+      let scamRisk = scamCheck?.scam_risk ?? 'Low';
+      let riskNotes = scamCheck?.risk_notes ?? '';
+
+      if (!scamCheck) {
+        const riskMatch = notes.match(/\[(HIGH|MEDIUM|LOW) RISK:\s*([^\]]+)\]/i);
+        if (riskMatch) {
+          scamRisk = riskMatch[1].charAt(0).toUpperCase() + riskMatch[1].slice(1).toLowerCase();
+          riskNotes = riskMatch[2].trim();
+        }
+      }
 
       return {
         id: (page.id as string) ?? '',
@@ -82,8 +121,8 @@ export async function GET() {
         platform:   extractProp(page, 'Platform', 'select') ?? 'Unknown',
         date:       extractProp(page, 'Date Applied', 'date') ?? (typeof page.created_time === 'string' ? page.created_time.split('T')[0] : ''),
         oa_link:    extractProp(page, 'OA Link', 'url'),
-        scam_risk:  scamCheck?.scam_risk ?? extractProp(page, 'Scam Risk', 'select') ?? 'Unknown',
-        risk_notes: scamCheck?.risk_notes ?? extractProp(page, 'Risk Notes', 'rich_text') ?? '',
+        scam_risk:  scamRisk,
+        risk_notes: riskNotes,
         prep_sheet: extractProp(page, 'Prep Sheet', 'rich_text') ?? '',
       };
     });

@@ -122,20 +122,29 @@ def is_job_related(subject: str, body: str, sender: str) -> bool:
     Quick heuristic check before sending to the LLM.
     Returns True if the email looks job/internship-related.
     """
+    subj_lower = subject.lower().strip()
+    sender_lower = sender.lower().strip()
     haystack = " ".join([subject, body[:500], sender]).lower()
     
-    # 1. Reject strict spam/newsletter keywords (Non-job related)
+    # 1. Reject strict networking / connection invitations (not applications)
+    if "invitations@linkedin.com" in sender_lower or "invite" in sender_lower:
+        if any(w in subj_lower for w in ("i want to connect", "invitation to connect", "join my network", "accepted your invitation", "wants to connect")):
+            return False
+
+    # 2. Reject strict marketing, courses, webinars, contests & carnival spam
     rejections = [
         "promotional", "marketing", "advertisement",
-        "courses", "masterclass", "webinar", "buy now", "buy course"
+        "courses", "masterclass", "webinar", "buy now", "buy course",
+        "carnival is live", "window is closing soon", "referral contest",
+        "summer carnival", "mega contest", "grand carnival", "early bird discount"
     ]
     
     # Check subject and sender first for strong rejection signals
-    subj_sender = f"{subject} {sender}".lower()
+    subj_sender = f"{subj_lower} {sender_lower}"
     if any(rej in subj_sender for rej in rejections):
         return False
         
-    # 2. Must contain job keywords
+    # 3. Must contain job keywords
     return any(kw in haystack for kw in JOB_KEYWORDS)
 
 

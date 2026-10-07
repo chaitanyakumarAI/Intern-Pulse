@@ -29,25 +29,17 @@ def _search_web(query: str, max_results: int = 3) -> str:
 def _heuristic_scam_check(company_name: str, scam_results: str) -> Dict[str, str]:
     """
     Fallback rule-based scam checker if Gemini is rate-limited or offline.
-    Uses string matching against common red flags in search snippets.
+    Uses string matching against common red flags in search snippets and threat detector.
     """
+    from threat_detector import evaluate_threat
+    threat = evaluate_threat(company_name)
+    if threat["scam_risk"] == "High":
+        return {
+            "scam_risk": "High",
+            "risk_notes": f"[Threat Engine] {threat['risk_notes']}"
+        }
+
     results_lower = scam_results.lower()
-    
-    # 1. Direct blocklist companies (known predatory/scam platforms reported by the user)
-    blocklist = {
-        "labmentix": "Known predatory platform offering fake or paid internship cert schemes.",
-        "bluestock": "Frequently flagged for deceptive internship offers, charging fees, or low educational value.",
-        "codsoft": "Flagged for sending generic certificate-based unpaid mass internship loops.",
-        "octanet": "Known for mass automated unpaid internship programs with low educational value."
-    }
-    
-    comp_clean = company_name.lower().replace(" ", "").replace("-", "")
-    for blocked_name, note in blocklist.items():
-        if blocked_name in comp_clean:
-            return {
-                "scam_risk": "High",
-                "risk_notes": f"[Heuristic Fallback] {note}"
-            }
 
     # 2. Heuristic word matching
     high_risk_words = ["scam", "fake", "fraud", "scammer", "MLM", "pyramid scheme", "scammed", "predatory"]
@@ -100,6 +92,16 @@ def analyze_company(company_name: str, role: str, status: str) -> Dict[str, str]
     """
     if company_name == "Unknown" or company_name.lower() in ("linkedin", "internshala", "unstop"):
         return {"scam_risk": "Unknown", "risk_notes": "", "prep_sheet": ""}
+
+    from threat_detector import evaluate_threat
+    quick_threat = evaluate_threat(company_name)
+    if quick_threat["scam_risk"] == "High":
+        logger.info("Threat detector flagged %s as High risk: %s", company_name, quick_threat["risk_notes"])
+        return {
+            "scam_risk": "High",
+            "risk_notes": quick_threat["risk_notes"],
+            "prep_sheet": ""
+        }
         
     comp_key = company_name.lower().strip()
     cache = _load_cache()

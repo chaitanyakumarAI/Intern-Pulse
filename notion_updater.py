@@ -1,10 +1,11 @@
+# -*- coding: utf-8 -*-
 """
-notion_updater.py — Create and update Notion database rows for job applications.
+notion_updater.py -- Create and update Notion database rows for job applications.
 
 Actual DB schema (verified via API):
   Company          (title)
   Role             (rich_text)
-  Platform         (select)   — options: LinkedIn, Email, Internshala, Unstop, etc.
+  Platform         (select)   -- options: LinkedIn, Email, Internshala, Unstop, etc.
   Applied Date     (date)
   Status           (select)   — our canonical labels
   Last Checked     (date)
@@ -19,6 +20,7 @@ Deduplication:
 Note: The database returns object type "data_source" in the Notion v3 API.
       We use client.databases.query() which still works for data_source objects.
 """
+import re
 import logging
 from typing import Optional
 
@@ -45,7 +47,7 @@ def _get_client() -> Client:
 
 
 def _get_db_id() -> str:
-    """Return DB ID — prefer .env value, fallback to hardcoded."""
+    """Return DB ID -- prefer .env value, fallback to hardcoded."""
     env_id = config.NOTION_DATABASE_ID
     if env_id and not env_id.startswith("your_"):
         return env_id
@@ -72,7 +74,7 @@ def _date(iso: Optional[str]) -> dict:
 
 # ── Build properties ──────────────────────────────────────────────────────────
 
-def _build_properties(email: dict, classification: dict) -> dict:
+def _build_properties(email: dict, classification: dict, status: str = None) -> dict:
     """
     Map classification result to Notion page properties.
     Embeds email_id inside Notes for deduplication: [eid:xxxx] ...
@@ -81,13 +83,14 @@ def _build_properties(email: dict, classification: dict) -> dict:
     notes_raw = classification.get("notes", "")
     notes_full = f"[eid:{email_id}] {notes_raw}".strip()
 
+    effective_status = status or classification.get("status", "Unknown")
     oa_link  = classification.get("oa_link") or None
     date_iso = email.get("date_iso")
 
     return {
         "Company":          _title(classification.get("company", "Unknown")),
         "Role":             _rich_text(classification.get("role", "Unknown")),
-        "Status":           _select(classification.get("status", "Unknown")),
+        "Status":           _select(effective_status),
         "Platform":         _select(classification.get("platform", "Email")),
         "Applied Date":     _date(date_iso),
         "Last Checked":     _date(now_iso()),
@@ -97,50 +100,95 @@ def _build_properties(email: dict, classification: dict) -> dict:
     }
 
 
-# ── Deduplication ─────────────────────────────────────────────────────────────
+# ── Deduplication & Normalization ─────────────────────────────────────────────
+
+def normalize_slug(name: str) -> str:
+    """Create a unified comparison slug for company names."""
+    if not name:
+        return ""
+    slug = name.lower()
+    slug = re.sub(r"^(?:team\.|hr\s+|updates\.|em\.|indiacampus\.|workday\s+)", "", slug)
+    slug = re.sub(r"\s+(?:human resources|workday notifications|job alerts|careers|recruiting|talent acquisition|recruitment|team|hr|fintech|technologies|pvt|ltd|inc|corp|opc private limted)$", "", slug)
+    slug = re.sub(r"[^a-z0-9]", "", slug)
+    
+    # Aliases
+    if "loreal" in slug: return "loreal"
+    if "accenture" in slug: return "accenture"
+    if "appliedmaterials" in slug or "amat" in slug: return "appliedmaterials"
+    if "bluestock" in slug: return "bluestock"
+    if "geaerospace" in slug or "general electric" in slug: return "geaerospace"
+    if "electronicarts" in slug or slug == "ea": return "electronicarts"
+    if "jpmorgan" in slug or "jpmc" in slug: return "jpmorganchase"
+    if "doordash" in slug: return "doordash"
+    if "walmart" in slug: return "walmart"
+    if "barclays" in slug: return "barclays"
+    if "target" in slug: return "target"
+    if "smytten" in slug: return "smytten"
+    if "iitbhilai" in slug or "ccps" in slug: return "ccpsiitbhilai"
+    if "jobrapido" in slug or "grace" in slug: return "jobrapido"
+    if "abekus" in slug or "stuti" in slug: return "abekus"
+    if "csk" in slug: return "csktechnologies"
+    if "quickhyre" in slug: return "quickhyre"
+    if "swiggy" in slug: return "swiggy"
+    if "labmentix" in slug: return "labmentix"
+
+    return slug
+
+
+STATUS_HIERARCHY = {
+    "Offer": 7,
+    "Interview Scheduled": 6,
+    "OA Sent": 5,
+    "Under Review": 4,
+    "Applied": 3,
+    "Needs Review": 2,
+    "Job Opportunity": 2,
+    "Rejected": 1,
+    "Ghosted": 1,
+    "Unknown": 0
+}
+
 
 @retry(max_attempts=3, delay=1.5)
 def _find_existing_page(email_id: str, company: str = "", role: str = "") -> Optional[dict]:
     """
     Search Notion for an existing page.
     1. First tries exact match by email_id in Notes.
-    2. Then tries exact match by Company + Role to merge duplicates.
+    2. Then tries canonical company slug to merge duplicates.
     """
     client = _get_client()
     db_id  = _get_db_id()
     
-    # 1. Exact email ID match
-    search_str = f"[eid:{email_id}]"
-    try:
-        resp = client.data_sources.query(
-            db_id,
-            filter={
-                "property": "Notes",
-                "rich_text": {"contains": search_str},
-            },
-        )
-        results = resp.get("results", [])
-        if results: return results[0]
-    except APIResponseError as exc:
-        logger.error("Notion dedup query error: %s", exc)
-        raise
-
-    # 2. Company + Role match (to merge different emails about same job)
-    if company and company != "Unknown" and role and role != "Unknown":
+    # 1. Exact email ID match in Notes
+    if email_id:
+        search_str = f"[eid:{email_id}]"
         try:
             resp = client.data_sources.query(
                 db_id,
                 filter={
-                    "and": [
-                        {"property": "Company", "title": {"equals": company}},
-                        {"property": "Role", "rich_text": {"equals": role}}
-                    ]
-                }
+                    "property": "Notes",
+                    "rich_text": {"contains": search_str},
+                },
             )
             results = resp.get("results", [])
             if results: return results[0]
-        except APIResponseError:
-            pass
+        except APIResponseError as exc:
+            logger.error("Notion dedup query error: %s", exc)
+            raise
+
+    # 2. Canonical company slug matching (merges multi-email threads/updates into same row)
+    target_slug = normalize_slug(company)
+    if target_slug and target_slug not in ("unknown", "directemail", "email"):
+        try:
+            resp = client.data_sources.query(db_id, page_size=100)
+            for page in resp.get("results", []):
+                p_props = page.get("properties", {})
+                p_title = p_props.get("Company", {}).get("title", [])
+                p_company = p_title[0].get("plain_text", "") if p_title else ""
+                if normalize_slug(p_company) == target_slug:
+                    return page
+        except APIResponseError as exc:
+            logger.warning("Notion slug query error: %s", exc)
 
     return None
 
@@ -150,7 +198,7 @@ def _find_existing_page(email_id: str, company: str = "", role: str = "") -> Opt
 @retry(max_attempts=3, delay=1.5)
 def upsert_application(email: dict, classification: dict) -> dict:
     """
-    Insert or update a Notion row.
+    Insert or update a Notion row with status progression and deduplication.
     Returns: {action: 'created'|'updated'|'skipped', page_id, status_changed}
     """
     client   = _get_client()
@@ -164,7 +212,6 @@ def upsert_application(email: dict, classification: dict) -> dict:
         logger.debug("Skipping Unknown status: %s", truncate(email.get("subject", "")))
         return {"action": "skipped", "page_id": None, "status_changed": False}
 
-    props    = _build_properties(email, classification)
     existing = _find_existing_page(email_id, company, role)
 
     if existing:
@@ -172,23 +219,38 @@ def upsert_application(email: dict, classification: dict) -> dict:
         try:
             old_status = existing["properties"]["Status"]["select"]["name"]
         except (KeyError, TypeError):
-            old_status = None
+            old_status = "Unknown"
 
-        status_changed = old_status != new_status
+        # Preserve the highest progression status in the hierarchy
+        old_rank = STATUS_HIERARCHY.get(old_status, 0)
+        new_rank = STATUS_HIERARCHY.get(new_status, 0)
+        effective_status = new_status if new_rank >= old_rank else old_status
 
-        if status_changed:
-            client.pages.update(page_id=page_id, properties=props)
-            logger.info(
-                "Updated row %s: %s → %s  [%s]",
-                page_id[:8], old_status, new_status,
-                truncate(email.get("subject", "")),
-            )
-        else:
-            logger.debug("No status change for %s (%s); skipping.", email_id, new_status)
+        # If existing role was generic, upgrade it to new role
+        try:
+            old_role_prop = existing["properties"]["Role"]["rich_text"]
+            old_role = old_role_prop[0]["plain_text"] if old_role_prop else ""
+        except (KeyError, TypeError, IndexError):
+            old_role = ""
 
+        effective_role = role
+        if old_role and old_role not in ("Candidate / Intern", "Unknown", "Intern") and role in ("Candidate / Intern", "Unknown"):
+            effective_role = old_role
+            classification["role"] = effective_role
+
+        props = _build_properties(email, classification, status=effective_status)
+        status_changed = (old_status != effective_status)
+
+        client.pages.update(page_id=page_id, properties=props)
+        logger.info(
+            "Updated row %s (%s): %s → %s  [%s]",
+            page_id[:8], company, old_status, effective_status,
+            truncate(email.get("subject", "")),
+        )
         return {"action": "updated", "page_id": page_id, "status_changed": status_changed}
 
     else:
+        props = _build_properties(email, classification, status=new_status)
         try:
             new_page = client.pages.create(
                 parent={"type": "data_source_id", "data_source_id": db_id},

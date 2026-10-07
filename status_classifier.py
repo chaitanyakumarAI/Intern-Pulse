@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 import config
 from utils import clean_text, is_job_related
+from threat_detector import evaluate_threat
 
 logger = logging.getLogger(__name__)
 
@@ -199,9 +200,28 @@ def classify_email_ai(email: dict) -> dict:
                         if not result.get("is_job_application", True):
                             return _fallback_result(email, reason="Filtered by AI: " + result.get("reasoning", ""))
 
+                        # Platform-leakage fix & Name Normalization
+                        raw_co = result.get("company", "Unknown")
+                        if not raw_co or raw_co.lower() in PLATFORM_KEYWORDS:
+                            extracted_co = _extract_company(sender, subject, body)
+                            if extracted_co != "Unknown":
+                                raw_co = extracted_co
+
+                        cleaned_co = clean_company_name(raw_co)
+                        cleaned_ro = clean_role_name(result.get("role", "Unknown"), subject=subject, company=cleaned_co)
+                        
+                        threat = evaluate_threat(company_name=cleaned_co, subject=subject, body=body, sender=sender)
+                        result["company"] = cleaned_co
+                        result["role"] = cleaned_ro
+                        result["scam_risk"] = threat.get("scam_risk", "Unknown")
+                        result["risk_notes"] = threat.get("risk_notes", "")
+
+                        if threat.get("scam_risk") in ("High", "Medium") and threat.get("risk_notes"):
+                            result["notes"] = f"[{threat['scam_risk'].upper()} RISK: {threat['risk_notes']}] {result.get('notes', '')}"[:2000]
+
                         logger.info(
-                            "Gemini classified [%s] -> status=%s company=%s conf=%s",
-                            subject[:50], result.get("status"), result.get("company"), result.get("confidence_score")
+                            "Gemini classified [%s] -> status=%s company=%s role=%s scam_risk=%s",
+                            subject[:50], result.get("status"), result.get("company"), result.get("role"), result.get("scam_risk")
                         )
                         return result
                     except Exception as exc:
@@ -362,72 +382,185 @@ _INTERNSHALA_RE = re.compile(
 )
 
 
-def _extract_role(subject: str, body: str = "") -> str:
+PLATFORM_KEYWORDS = {
+    "internshala", "unstop", "linkedin", "naukri", "wellfound", "indeed",
+    "glassdoor", "jobrapido", "foundit", "workday", "greenhouse", "lever", "myworkday"
+}
+
+def clean_company_name(name: str) -> str:
+    """Normalize extracted company string."""
+    if not name:
+        return "Unknown"
+    # Strip common noise prefixes & suffixes
+    name = re.sub(r"^(?:Team\.|HR\s+|Updates\.|Em\.|Indiacampus\.|Workday\s+)", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"\s+(?:Human Resources|Workday Notifications|Job Alerts|Careers|Recruiting|Talent Acquisition|Recruitment|Team|HR)$", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"^(?:at|from|via|to)\s+", "", name, flags=re.IGNORECASE).strip()
+    
+    # Specific known enterprise & platform fixes
+    name_lower = name.lower()
+    if "l'oréal" in name_lower or "l'oreal" in name_lower or "loreal" in name_lower:
+        return "L'Oréal"
+    if "accenture" in name_lower:
+        return "Accenture"
+    if "applied materials" in name_lower or "amat" in name_lower:
+        return "Applied Materials"
+    if "bluestock" in name_lower:
+        return "Bluestock Fintech"
+    if "ge aerospace" in name_lower or "general electric" in name_lower:
+        return "GE Aerospace"
+    if "electronic arts" in name_lower or name_lower.startswith("ea.") or name_lower == "ea":
+        return "Electronic Arts"
+    if "jpmorgan" in name_lower or "jpmc" in name_lower:
+        return "JPMorganChase"
+    if "walmart" in name_lower:
+        return "Walmart"
+    if "doordash" in name_lower:
+        return "DoorDash"
+    if "barclays" in name_lower:
+        return "Barclays"
+    if "target" in name_lower:
+        return "Target"
+    if "smytten" in name_lower:
+        return "Smytten"
+    if "iit bhilai" in name_lower or "ccps" in name_lower:
+        return "CCPS, IIT Bhilai"
+    if "labmentix" in name_lower:
+        return "Labmentix"
+    if "abekus" in name_lower or "stuti" in name_lower:
+        return "Abekus"
+    if "jobrapido" in name_lower or "grace" in name_lower:
+        return "Jobrapido"
+    if "csk technologies" in name_lower or "csk" in name_lower:
+        return "CSK Technologies"
+    
+    return name.strip()
+
+
+def clean_role_name(role: str, subject: str = "", company: str = "") -> str:
+    """Strip noise and company name fragments from role."""
+    if not role or role == "Unknown":
+        return "Candidate / Intern"
+    
+    # Strip company name from role if present
+    if company and company.lower() in role.lower():
+        role = re.sub(rf"^{re.escape(company)}\s*[-|:]?\s*", "", role, flags=re.IGNORECASE).strip()
+        role = re.sub(rf"\s*(?:at|with|for)\s+{re.escape(company)}$", "", role, flags=re.IGNORECASE).strip()
+        
+    role_clean = role.strip()
+    role_lower = role_clean.lower()
+    
+    bad_tokens = (
+        "shortlisted", "closing soon", "is live", "carnival", "spot", "details",
+        "confirm", "electronic arts", "materials", "update", "notification", "application",
+        "submitted", "received", "status", "candidate"
+    )
+    if any(role_lower == bad or role_lower.startswith(bad) for bad in bad_tokens):
+        m = re.search(r"\b([A-Za-z\s]+(?:Intern(?:ship)?|Engineer|Analyst|Developer|Designer|Manager))\b", subject, re.IGNORECASE)
+        if m:
+            return m.group(1).strip().title()
+        return "Candidate / Intern"
+
+    role_clean = re.sub(r"^[|\-:]\s*", "", role_clean).strip()
+    if len(role_clean) < 3 or role_clean.lower() in ("internship", "intern", "role", "job"):
+        return "Candidate / Intern"
+        
+    return role_clean[:80].title()
+
+
+def _extract_role(subject: str, body: str = "", company: str = "") -> str:
     subj_lower = subject.lower().strip()
     
     m = _INTERNSHALA_RE.search(subject)
     if m:
         role = m.group(1).strip()
         if len(role) >= 4:
-            return role[:100]
+            return clean_role_name(role[:100], subject=subject, company=company)
 
     for pattern in _ROLE_PATTERNS[:32]:
         m = re.search(pattern, subj_lower)
         if m:
-            return m.group(1).strip().title()[:100]
+            return clean_role_name(m.group(1).strip().title()[:100], subject=subject, company=company)
             
     body_lower = body[:1000].lower()
     for pattern in _ROLE_PATTERNS[:32]:
         m = re.search(pattern, body_lower)
         if m:
-            return m.group(1).strip().title()[:100]
+            return clean_role_name(m.group(1).strip().title()[:100], subject=subject, company=company)
 
     for pattern in _ROLE_PATTERNS[32:]:
         m = re.search(pattern, subj_lower, re.IGNORECASE)
         if m:
             role = m.group(1).strip()
             if 3 <= len(role) <= 80:
-                return role.strip()[:100]
+                return clean_role_name(role.strip()[:100], subject=subject, company=company)
 
-    return "Unknown"
+    return "Candidate / Intern"
 
 
 def _extract_company(sender: str, subject: str = "", body: str = "") -> str:
+    # 1. Subject extraction first (vital for platform aggregators: Internshala, Unstop, LinkedIn)
+    # Pattern A: "Company | ..." (e.g. "L'Oréal | Confirm your spot.", "Swiggy | Online Test")
+    m_pipe = re.match(r"^([A-Z0-9'a-zÀ-ÿ\s&.-]{2,40}?)\s*\|", subject)
+    if m_pipe:
+        candidate = m_pipe.group(1).strip()
+        if candidate.lower() not in PLATFORM_KEYWORDS and len(candidate) >= 2:
+            return clean_company_name(candidate)
+
+    # Pattern B: "Company - ..." or "Company: ..."
+    m_dash = re.match(r"^([A-Z0-9'a-zÀ-ÿ\s&.-]{2,35}?)\s*[-:]\s*(?:Confirm|Application|Sustainability|Intern|Next|Online|OA|Hiring|Opportunity)", subject, re.IGNORECASE)
+    if m_dash:
+        candidate = m_dash.group(1).strip()
+        if candidate.lower() not in PLATFORM_KEYWORDS and len(candidate) >= 2:
+            return clean_company_name(candidate)
+
+    # Pattern C: "... at Company ..." or "... to Company ..." or "... with Company ..."
+    m_at = re.search(r"\b(?:at|to|with)\s+([A-Z][A-Za-z0-9'À-ÿ\s&.-]{1,35}?)(?:\s+(?:has been|has shortlisted|is reviewing|for|was|application)|\s*[-|:,]|$)", subject)
+    if m_at:
+        candidate = m_at.group(1).strip()
+        if candidate.lower() not in PLATFORM_KEYWORDS and len(candidate) >= 2:
+            return clean_company_name(candidate)
+
+    # Pattern D: "[Company] ..."
+    m_bracket = re.match(r"^\[([A-Z0-9'a-zÀ-ÿ\s&.-]{2,30})\]", subject)
+    if m_bracket:
+        candidate = m_bracket.group(1).strip()
+        if candidate.lower() not in PLATFORM_KEYWORDS and len(candidate) >= 2:
+            return clean_company_name(candidate)
+
+    # Pattern E: Known company in subject
+    for known in ["L'Oréal", "L'Oreal", "Google", "Amazon", "Microsoft", "Walmart", "Barclays", "Target", "Accenture", "Applied Materials", "DoorDash", "Smytten", "Electronic Arts", "GE Aerospace"]:
+        if re.search(rf"\b{re.escape(known)}\b", subject, re.IGNORECASE):
+            return clean_company_name(known)
+
+    # 2. Sender display name (if not a platform)
     name_match = re.match(r'^"?([^"<]+)"?\s*<', sender)
     if name_match:
         name = name_match.group(1).strip()
-        
-        # Blacklist common platform sender names
         is_blacklisted = any(bad in name.lower() for bad in (
             "noreply", "no-reply", "donotreply", "team", "support", "careers", 
-            "recruitment", "talent acquisition", "internshala", "linkedin", "unstop", "jia", "update"
+            "recruitment", "talent acquisition", "internshala", "linkedin", "unstop", "jia", "update", "updates"
         ))
-        
         if not is_blacklisted:
-            name = re.sub(r"\s+(?:Team|Recruiting|Talent|Careers|HR)$", "", name, flags=re.IGNORECASE).strip()
-            if len(name) >= 2:
-                return name[:80]
-                
-    m = re.search(r"at\s+([A-Z][a-zA-Z0-9\s]+?)(?:\s+for\s+|\s*$|\s+[-|@])", subject)
-    if m:
-        comp = m.group(1).strip()
-        if len(comp) > 2 and comp.lower() not in ("internshala", "linkedin", "unstop"):
-            return comp[:80]
-            
-    # Try to extract from common email patterns like "at Company" in body (simplistic)
+            candidate = clean_company_name(name)
+            if len(candidate) >= 2 and candidate.lower() not in PLATFORM_KEYWORDS:
+                return candidate
+
+    # 3. Body text regex
     if "application" in subject.lower() or "application" in body.lower() or "internship" in subject.lower():
-        m_body = re.search(r"at\s+([A-Z][a-zA-Z0-9\s,&.-]+?)(?:\s+has been|\s+successfully|\s+is|\s+was)", body[:2000])
+        m_body = re.search(r"at\s+([A-Z][a-zA-Z0-9\s,&.-]{2,40}?)(?:\s+has been|\s+successfully|\s+is|\s+was)", body[:2000])
         if m_body:
             comp = m_body.group(1).strip()
-            if len(comp) > 2 and comp.lower() not in ("internshala", "linkedin", "unstop"):
-                return comp[:80]
-                
+            if len(comp) > 2 and comp.lower() not in PLATFORM_KEYWORDS:
+                return clean_company_name(comp)
+
+    # 4. Domain check
     match = re.search(r"@([\w.-]+)\.", sender)
     if match:
-        domain = match.group(1)
-        for prefix in ("mail", "email", "noreply", "no-reply", "careers", "jobs", "hr", "info", "donotreply", "talent"):
-            domain = re.sub(rf"^{prefix}\.", "", domain)
-        return domain.title()
+        domain = match.group(1).lower()
+        if domain not in ("gmail", "yahoo", "outlook", "hotmail") and domain not in PLATFORM_KEYWORDS:
+            for prefix in ("mail", "email", "noreply", "no-reply", "careers", "jobs", "hr", "info", "donotreply", "talent", "campus"):
+                domain = re.sub(rf"^{prefix}\.", "", domain)
+            return clean_company_name(domain.title())
 
     return "Unknown"
 
@@ -493,9 +626,18 @@ def _keyword_classify(email: dict) -> dict:
     else:
         status = "Unknown"
 
-    company = _extract_company(sender, subject, body)
-    role    = _extract_role(subject, body)
+    raw_co   = _extract_company(sender, subject, body)
+    company  = clean_company_name(raw_co)
+    role     = _extract_role(subject, body, company=company)
     platform = _determine_platform(sender, body)
+
+    threat = evaluate_threat(company_name=company, subject=subject, body=body, sender=sender)
+    scam_risk = threat.get("scam_risk", "Unknown")
+    risk_notes = threat.get("risk_notes", "")
+    
+    notes = "(keyword fallback)"
+    if scam_risk in ("High", "Medium") and risk_notes:
+        notes = f"[{scam_risk.upper()} RISK: {risk_notes}] {notes}"
 
     return {
         "is_job_application": True,
@@ -507,7 +649,9 @@ def _keyword_classify(email: dict) -> dict:
         "interview_date": None,
         "recruiter_name": None,
         "confidence_score": 40, # Keyword is low confidence
-        "notes":          "(keyword fallback)",
+        "notes":          notes,
+        "scam_risk":      scam_risk,
+        "risk_notes":     risk_notes,
     }
 
 

@@ -37,14 +37,19 @@ def main() -> None:
     parser.add_argument(
         "--once",
         action="store_true",
-        help="Run once immediately and exit",
-    )
     parser.add_argument(
-        "--force",
+        "--server",
         action="store_true",
-        help="Bypass daily sync quota limit",
+        help="Run HTTP server mode (default if PORT env var is present)",
     )
     args = parser.parse_args()
+
+    import os
+    if (os.environ.get("PORT") or args.server) and not args.once:
+        logger.info("PORT environment variable detected (%s). Starting HTTP server mode...", os.environ.get("PORT"))
+        import server
+        server.run_server()
+        return
 
     logger.info("Note: The recurring time-loop scheduler has been replaced with the Daily Quota Sync engine.")
     run_pipeline(force=args.force)
