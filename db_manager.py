@@ -72,8 +72,16 @@ def normalize_slug(name: str) -> str:
 # ── Configuration & Client Detection ──────────────────────────────────────────
 
 def _get_supabase_config() -> Optional[Dict[str, str]]:
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY", "")
+    url = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").rstrip("/")
+    key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_SECRET_KEY")
+        or os.getenv("SUPABASE_KEY")
+        or os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        or ""
+    )
     if url and key and not url.startswith("your_") and not key.startswith("your_"):
         return {"url": url, "key": key}
     return None
@@ -178,8 +186,9 @@ def find_application_by_slug(slug: str) -> Optional[Dict[str, Any]]:
         try:
             endpoint = f"{sb['url']}/rest/v1/applications?company_slug=eq.{slug}&select=*"
             resp = requests.get(endpoint, headers=_supabase_headers(sb), timeout=10)
-            if resp.status_code == 200 and resp.json():
-                return resp.json()[0]
+            if resp.status_code == 200:
+                rows = resp.json()
+                return rows[0] if rows else None
         except Exception as e:
             logger.warning("Supabase lookup failed: %s", e)
 
