@@ -42,8 +42,10 @@ def setup_logging(name: str = "ai-job-tracker") -> logging.Logger:
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY: str = (
     os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    or os.getenv("SUPABASE_SECRET_KEY", "")
     or os.getenv("SUPABASE_KEY", "")
     or os.getenv("SUPABASE_ANON_KEY", "")
+    or os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
 )
 
 # ── Notion (Legacy / Optional) ───────────────────────────────────────────────
