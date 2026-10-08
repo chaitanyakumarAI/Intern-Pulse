@@ -84,17 +84,27 @@ else:
     GMAIL_QUERY: str = _base_query
 
 # Cloud Deployment: If the raw JSON is provided via ENV, write it to the file so the app can use it
-_creds_json = os.getenv("GMAIL_CREDENTIALS_JSON")
-if _creds_json and not GMAIL_CREDENTIALS_FILE.exists():
+_creds_json = (
+    os.getenv("GMAIL_CREDENTIALS_JSON")
+    or os.getenv("GMAIL_CREDENTIALS")
+    or os.getenv("GOOGLE_CREDENTIALS_JSON")
+)
+if _creds_json:
     try:
-        GMAIL_CREDENTIALS_FILE.write_text(_creds_json, encoding="utf-8")
+        GMAIL_CREDENTIALS_FILE.write_text(_creds_json.strip(), encoding="utf-8")
+        logging.info("Wrote %s from environment variable.", GMAIL_CREDENTIALS_FILE.name)
     except Exception as e:
         logging.error("Failed to write GMAIL_CREDENTIALS_JSON from env: %s", e)
 
-_token_json = os.getenv("GMAIL_TOKEN_JSON")
-if _token_json and not GMAIL_TOKEN_FILE.exists():
+_token_json = (
+    os.getenv("GMAIL_TOKEN_JSON")
+    or os.getenv("GMAIL_TOKEN")
+    or os.getenv("GOOGLE_TOKEN_JSON")
+)
+if _token_json:
     try:
-        GMAIL_TOKEN_FILE.write_text(_token_json, encoding="utf-8")
+        GMAIL_TOKEN_FILE.write_text(_token_json.strip(), encoding="utf-8")
+        logging.info("Wrote %s from environment variable.", GMAIL_TOKEN_FILE.name)
     except Exception as e:
         logging.error("Failed to write GMAIL_TOKEN_JSON from env: %s", e)
 
