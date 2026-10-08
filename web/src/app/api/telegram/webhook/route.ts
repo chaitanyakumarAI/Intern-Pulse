@@ -170,17 +170,16 @@ export async function POST(req: Request) {
       const helpMsg =
         '⚡ <b>InternPulse AI Bot — Command Center</b>\n\n' +
         'Here are the commands you can use:\n\n' +
-        '🔄 <b>/status &lt;Company&gt; &lt;Status&gt;</b>\n' +
-        '<i>Update application stage in database.</i>\n' +
-        'Examples:\n' +
+        '🔍 <b>/scan</b> — Trigger an on-demand Gmail scan now\n' +
+        '🌐 <b>/web</b> — Get direct links to the Web Dashboard\n' +
+        '⏱️ <b>/quota</b> — Check today\'s remaining sync quota\n' +
+        '📋 <b>/list [limit]</b> — View recent applications and stages\n' +
+        '📊 <b>/stats</b> — View active pipeline metrics & conversion\n' +
+        '🔄 <b>/status &lt;Company&gt; &lt;Status&gt;</b> — Update an application stage\n\n' +
+        '<i>Examples:</i>\n' +
         '  • <code>/status Google Interview</code>\n' +
         '  • <code>/status Microsoft Offer</code>\n' +
-        '  • <code>/status Amazon OA</code>\n' +
-        '  • <code>/status Meta Rejected</code>\n\n' +
-        '📋 <b>/list [limit]</b>\n' +
-        '<i>View your recent applications and current stages.</i>\n\n' +
-        '📊 <b>/stats</b>\n' +
-        '<i>View active pipeline breakdown and response velocity.</i>\n\n' +
+        '  • <code>/status Amazon OA</code>\n\n' +
         '❓ <b>/help</b> — Show this command reference.';
       await sendTelegramMessage(chatId, helpMsg);
     } else if (cmdToken === '/status' || cmdToken === '/update') {
@@ -290,6 +289,51 @@ export async function POST(req: Request) {
         `📈 <b>Positive Response Rate:</b> <b>${stats.responseRate}%</b>\n\n` +
         '<i>Use <code>/list</code> to see recent updates or <code>/status &lt;Co&gt; &lt;Stage&gt;</code> to advance.</i>';
       await sendTelegramMessage(chatId, msg);
+    } else if (cmdToken === '/scan' || cmdToken === '/sync') {
+      const workerUrl = process.env.RENDER_WORKER_URL || 'https://ai-job-tracker-worker.onrender.com';
+      await sendTelegramMessage(
+        chatId,
+        '⚡ <b>Initiating Gmail Inbox Sync...</b>\n\n' +
+        'Triggering background scan on cloud worker.\n' +
+        'Parsed applications will be written to Supabase in real time.'
+      );
+      try {
+        const resp = await fetch(`${workerUrl}/api/sync`, { method: 'POST' });
+        if (!resp.ok) {
+          await sendTelegramMessage(chatId, `⚠️ Cloud worker returned status ${resp.status}. Please check Render logs.`);
+        }
+      } catch (err) {
+        await sendTelegramMessage(chatId, `❌ Failed to trigger worker: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (cmdToken === '/web' || cmdToken === '/dashboard' || cmdToken === '/hub') {
+      const webUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://ai-internship-tracker.vercel.app';
+      await sendTelegramMessage(
+        chatId,
+        '🌐 <b>InternPulse Web Dashboard:</b>\n' +
+        `Main: ${webUrl}\n` +
+        `Pipeline: ${webUrl}/pipeline\n` +
+        `Analytics Hub: ${webUrl}/hub\n\n` +
+        '<i>Track your applications with 3D visuals, threat detection, and pipeline velocity.</i>'
+      );
+    } else if (cmdToken === '/quota' || cmdToken === '/limit') {
+      const workerUrl = process.env.RENDER_WORKER_URL || 'https://ai-job-tracker-worker.onrender.com';
+      try {
+        const resp = await fetch(`${workerUrl}/api/quota`);
+        if (resp.ok) {
+          const q = await resp.json();
+          await sendTelegramMessage(
+            chatId,
+            '⏱️ <b>Daily Sync Quota:</b>\n\n' +
+            `• <b>Syncs Used Today:</b> ${q.syncs_today} / ${q.daily_limit}\n` +
+            `• <b>Remaining:</b> ${q.remaining}\n` +
+            `• <b>Resets At:</b> ${q.resets_at || '00:00 UTC'}`
+          );
+        } else {
+          await sendTelegramMessage(chatId, '⏱️ Quota: 5 daily syncs allowed. Automated polling runs periodically.');
+        }
+      } catch {
+        await sendTelegramMessage(chatId, '⏱️ Quota: Standard limit is 5 syncs/day. Automated polling is active.');
+      }
     } else {
       await sendTelegramMessage(
         chatId,
