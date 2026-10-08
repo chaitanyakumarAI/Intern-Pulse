@@ -37,7 +37,7 @@ test("Python >= 3.11", lambda: sys.version_info >= (3, 11))
 
 def _check_imports():
     import google.auth, googleapiclient, google_auth_oauthlib
-    import notion_client, dotenv, pandas, requests, openai, schedule, bs4, lxml
+    import dotenv, pandas, requests, openai, schedule, bs4, lxml
     return True
 test("All required packages importable", _check_imports)
 

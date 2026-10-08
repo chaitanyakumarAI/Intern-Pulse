@@ -1,7 +1,6 @@
 google-api-python-client>=2.196.0
 google-auth-oauthlib>=1.4.0
 google-auth-httplib2>=0.4.0
-notion-client>=3.1.0
 python-dotenv>=1.2.2
 pandas>=3.0.3
 requests>=2.34.0
