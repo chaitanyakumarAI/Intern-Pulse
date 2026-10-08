@@ -17,11 +17,19 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 import config
 from utils import now_iso, retry, truncate
 
 logger = logging.getLogger(__name__)
+
+# Resilient HTTP session to prevent transient socket resets
+_session = requests.Session()
+_adapter = HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504], raise_on_status=False))
+_session.mount("https://", _adapter)
+_session.mount("http://", _adapter)
 
 STATUS_HIERARCHY = {
     "Offer": 7,
@@ -157,7 +165,7 @@ def get_all_applications() -> List[Dict[str, Any]]:
     if sb:
         try:
             endpoint = f"{sb['url']}/rest/v1/applications?select=*&order=last_checked.desc"
-            resp = requests.get(endpoint, headers=_supabase_headers(sb), timeout=10)
+            resp = _session.get(endpoint, headers=_supabase_headers(sb), timeout=10)
             if resp.status_code == 200:
                 rows = resp.json()
                 logger.info("Retrieved %d applications from Supabase.", len(rows))
@@ -185,7 +193,7 @@ def find_application_by_slug(slug: str) -> Optional[Dict[str, Any]]:
     if sb:
         try:
             endpoint = f"{sb['url']}/rest/v1/applications?company_slug=eq.{slug}&select=*"
-            resp = requests.get(endpoint, headers=_supabase_headers(sb), timeout=10)
+            resp = _session.get(endpoint, headers=_supabase_headers(sb), timeout=10)
             if resp.status_code == 200:
                 rows = resp.json()
                 return rows[0] if rows else None
@@ -257,7 +265,7 @@ def upsert_application(email: dict, classification: dict) -> dict:
         if sb:
             try:
                 endpoint = f"{sb['url']}/rest/v1/applications?id=eq.{row_id}"
-                resp = requests.patch(endpoint, headers=_supabase_headers(sb), json=update_payload, timeout=10)
+                resp = _session.patch(endpoint, headers=_supabase_headers(sb), json=update_payload, timeout=10)
                 if resp.status_code in (200, 204):
                     logger.info("Supabase updated row %s (%s): %s -> %s", row_id[:8], company, old_status, effective_status)
                     return {"action": "updated", "id": row_id, "status_changed": status_changed}
@@ -304,7 +312,7 @@ def upsert_application(email: dict, classification: dict) -> dict:
         if sb:
             try:
                 endpoint = f"{sb['url']}/rest/v1/applications"
-                resp = requests.post(endpoint, headers=_supabase_headers(sb), json=new_payload, timeout=10)
+                resp = _session.post(endpoint, headers=_supabase_headers(sb), json=new_payload, timeout=10)
                 if resp.status_code in (200, 201):
                     logger.info("Supabase created application %s: %s @ %s [%s]", row_id[:8], role, company, status)
                     _sync_json_backup()
@@ -334,7 +342,7 @@ def update_application_status(app_id: str, new_status: str) -> bool:
     if sb:
         try:
             endpoint = f"{sb['url']}/rest/v1/applications?id=eq.{app_id}"
-            resp = requests.patch(
+            resp = _session.patch(
                 endpoint,
                 headers=_supabase_headers(sb),
                 json={"status": new_status, "last_checked": now_str, "updated_at": now_str},
