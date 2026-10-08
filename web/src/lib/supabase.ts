@@ -20,5 +20,19 @@ export const isSupabaseConfigured = Boolean(
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseKey, {
       auth: { persistSession: false },
+      ...(typeof window === 'undefined'
+        ? {
+            realtime: {
+              // Node.js < 22 requires explicit ws transport
+              transport: (() => {
+                try {
+                  return require('ws');
+                } catch {
+                  return undefined;
+                }
+              })(),
+            },
+          }
+        : {}),
     })
   : null;
