@@ -50,17 +50,13 @@ jobs:
         run: |
           cd web/android
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log || {
-            echo "### ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 80 build.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            exit 1
-          }
+          ./gradlew assembleDebug --stacktrace
+          echo "Listing generated APK files:"
+          find . -name "*.apk" -type f
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: InternPulse-Debug-APK
-          path: web/android/app/build/outputs/apk/debug/app-debug.apk
+          path: web/android/**/*.apk
           retention-days: 14
