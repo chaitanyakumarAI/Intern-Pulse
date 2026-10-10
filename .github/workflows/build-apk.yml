@@ -50,7 +50,16 @@ jobs:
         run: |
           cd web/android
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace > gradle_build.log 2>&1 || BUILD_FAILED=true
+          if [ "$BUILD_FAILED" = "true" ]; then
+            echo "## ❌ Gradle Build Error Details" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            tail -n 80 gradle_build.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat gradle_build.log
+            exit 1
+          fi
+          echo "## ✅ Build Succeeded" >> $GITHUB_STEP_SUMMARY
           echo "Listing generated APK files:"
           find . -name "*.apk" -type f
 
