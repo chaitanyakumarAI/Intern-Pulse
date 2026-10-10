@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">InternPulse</string>
+    <string name="title_activity_main">InternPulse</string>
+    <string name="package_name">com.internpulse.app</string>
+    <string name="custom_url_scheme">com.internpulse.app</string>
+</resources>
