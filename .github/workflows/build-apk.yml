@@ -31,10 +31,11 @@ jobs:
           distribution: 'zulu'
           java-version: '21'
 
-      - name: Verify Android SDK & Accept Licenses
+      - name: Verify Android SDK & Install API 35
         run: |
           echo "Using Android SDK at: $ANDROID_HOME"
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" || true
 
       - name: Install Web Dependencies
         run: |
