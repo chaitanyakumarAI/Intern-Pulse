@@ -31,8 +31,9 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Verify Android SDK
+        run: |
+          echo "Using Android SDK at: $ANDROID_HOME"
 
       - name: Install Web Dependencies
         run: |
