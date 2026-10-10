@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InternPulse</title>
+  <style>
+    body {
+      background-color: #06070d;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      text-align: center;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      border-top-color: #3b82f6;
+      animation: spin 1s ease-in-out infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <div style="font-weight: 600; font-size: 18px; letter-spacing: -0.02em;">InternPulse</div>
+  <div style="font-size: 13px; color: #94a3b8; margin-top: 6px;">Connecting to live workspace...</div>
+  <script>
+    // In case server.url is unreachable or offline
+    setTimeout(function() {
+      window.location.href = "https://ai-internship-tracker.vercel.app";
+    }, 100);
+  </script>
+</body>
+</html>
