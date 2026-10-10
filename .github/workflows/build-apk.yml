@@ -31,9 +31,10 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Verify Android SDK
+      - name: Verify Android SDK & Accept Licenses
         run: |
           echo "Using Android SDK at: $ANDROID_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
       - name: Install Web Dependencies
         run: |
