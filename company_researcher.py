@@ -153,7 +153,7 @@ Return ONLY valid JSON with this schema:
 }}
 """
     # Fetch the rotating client manager
-    from status_classifier import rotate_gemini_client, _get_gemini_client
+    from status_classifier import rotate_gemini_client, _get_gemini_client, GEMINI_MODEL
     
     # Define retrying call helper
     @retry(max_attempts=3, delay=5.0, backoff=2.0, exceptions=(Exception,))
@@ -163,7 +163,7 @@ Return ONLY valid JSON with this schema:
             raise Exception("No active Gemini clients available.")
         try:
             response = active_client.models.generate_content(
-                model='gemini-flash-latest',
+                model=GEMINI_MODEL,
                 contents=prompt,
                 config={"temperature": 0.2, "response_mime_type": "application/json"}
             )

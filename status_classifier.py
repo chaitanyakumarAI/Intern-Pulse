@@ -1,10 +1,14 @@
 """
 status_classifier.py — AI-powered structured email classification.
 
-Classification priority chain:
-  1. OpenAI GPT-4o-mini     (best accuracy, requires paid credits)
-  2. Google Gemini Flash     (FREE tier — 15 req/min, 1M tokens/day)
-  3. Keyword-based fallback  (offline, always works)
+Three-tier pipeline:
+  1. Relevance gate         — utils.is_job_related() (deterministic, free)
+  2. Google Gemini Flash    — JSON-mode extraction, validated by _parse_llm_response()
+  3. Keyword/regex fallback — offline, used when Gemini is unavailable
+
+Gemini resilience: API-key rotation on rate limits, backoff on transient (5xx /
+timeout) errors, and a circuit breaker that disables Gemini for the rest of a run
+only on configuration errors or after several consecutive failed emails.
 """
 import re
 import json
@@ -21,16 +25,53 @@ from threat_detector import evaluate_threat
 logger = logging.getLogger(__name__)
 
 # ── Status labels (canonical set) ─────────────────────────────────────────────
-VALID_STATUSES = set(config.STATUS_LABELS) | {"Needs Review"}
+VALID_STATUSES = set(config.STATUS_LABELS)
 VALID_PLATFORMS = {"LinkedIn", "Internshala", "Unstop", "Wellfound", "Naukri", "Company Portal", "Direct Email", "Unknown"}
+
+# ── Gemini call settings ──────────────────────────────────────────────────────
+GEMINI_MODEL = "gemini-flash-latest"
+GEMINI_MAX_ATTEMPTS = 3
+GEMINI_PACING_SECONDS = 4.5          # stay under the free tier's 15 requests/minute
+GEMINI_BREAKER_THRESHOLD = 3         # consecutive failed emails before giving up for the run
+_sleep = time.sleep                  # indirection so tests can skip real waiting
 
 # ── Session-level flags ───────────────────────────────────────────────────────
 _gemini_failed         = False
+_consecutive_failures  = 0
 
 def reset_gemini_session() -> None:
-    """Reset session failure flag so subsequent runs or scans can retry Gemini."""
-    global _gemini_failed
+    """Reset session failure state so subsequent runs or scans can retry Gemini."""
+    global _gemini_failed, _consecutive_failures
     _gemini_failed = False
+    _consecutive_failures = 0
+
+
+def is_gemini_configured() -> bool:
+    """True when at least one usable Gemini API key is set."""
+    return any(k.strip() and not k.strip().startswith("your_")
+               for k in (config.GEMINI_API_KEY or "").split(","))
+
+
+def _gemini_error_kind(exc: Exception) -> str:
+    """
+    Classify a Gemini failure:
+      'rate_limit' — 429 / quota exhausted: rotate key, then back off
+      'transient'  — 5xx, timeouts, connection drops: back off and retry
+      'fatal'      — bad key / permission / unknown model: stop using Gemini this run
+      'per_email'  — anything else (bad request, empty or blocked reply): fall back for this email only
+    """
+    code = getattr(exc, "code", None)
+    text = f"{type(exc).__name__} {exc}".upper()
+
+    if "API_KEY_INVALID" in text or "PERMISSION_DENIED" in text or code in (401, 403, 404):
+        return "fatal"
+    if code == 429 or "RESOURCE_EXHAUSTED" in text or re.search(r"\b429\b", text) or "QUOTA" in text:
+        return "rate_limit"
+    if (isinstance(code, int) and (code >= 500 or code == 408)) \
+            or isinstance(exc, (TimeoutError, ConnectionError)) \
+            or re.search(r"\b50[0-4]\b|UNAVAILABLE|DEADLINE_EXCEEDED|TIMEOUT|TIMED OUT|CONNECT", text):
+        return "transient"
+    return "per_email"
 
 # ── Lazy clients ─────────────────────────────────────────────────────────────
 _gemini_model  = None
@@ -46,7 +87,7 @@ def _log_debug(email: dict, raw_response: str, parsed: dict, method: str):
             with open(DEBUG_LOG_FILE, "r", encoding="utf-8") as f:
                 try:
                     data = json.load(f)
-                except:
+                except json.JSONDecodeError:
                     pass
         
         data.append({
@@ -132,7 +173,7 @@ Return ONLY valid JSON matching this schema:
   "confidence_score": integer (0 to 100),
   "company_name": "Name of the company hiring (or null if unknown)",
   "role": "Job/internship title (or null)",
-  "status": "One of: Applied | Under Review | OA Sent | Interview Scheduled | Rejected | Offer | Ghosted | Needs Review | Job Opportunity | Unknown",
+  "status": "One of: __STATUS_ENUM__",
   "platform": "One of: LinkedIn | Internshala | Unstop | Wellfound | Naukri | Company Portal | Direct Email | Unknown",
   "interview_date": "ISO string or null",
   "action_link": "URL for the online assessment, interview, or job application link (or null)",
@@ -148,109 +189,137 @@ STATUS RULES:
 - "Applied" means confirmation of application.
 - "Under Review" means moving to the next stage but no interview yet.
 - "Job Opportunity" means it's a digest/alert about a company hiring, NOT an application you submitted.
-""".strip()
+""".strip().replace("__STATUS_ENUM__", " | ".join(config.STATUS_LABELS))
 
 
 # ── Main classifier entry point ───────────────────────────────────────────────
 
 def classify_email_ai(email: dict) -> dict:
     """
-    Classify an email using Google Gemini Flash.
-    Falls back to Keyword classifier if API fails or rate limit exceeded too many times.
+    Classify an email: Gemini first (with key rotation, backoff and a circuit
+    breaker), keyword classifier as the fallback. The result's "method" field
+    records which tier produced it: "gemini", "keyword" or "skipped".
     """
-    global _gemini_failed
+    global _gemini_failed, _consecutive_failures
 
     subject = email.get("subject", "")
     body    = email.get("body", "")
     sender  = email.get("sender", "")
 
-    # Fast pre-filter
+    # Tier 1: fast pre-filter
     if not is_job_related(subject, body, sender):
         logger.debug("Skipping non-job email: %s", subject[:60])
         return _fallback_result(email, reason="not job-related")
 
-    user_content = (
-        f"Subject: {subject}\n\n"
-        f"From: {sender}\n\n"
-        f"Body:\n{clean_text(body, max_chars=3000)}"
-    )
+    # Tier 2: Gemini
+    if not _gemini_failed and not is_gemini_configured():
+        logger.info("Gemini not configured (GEMINI_API_KEY not set) — using keyword fallback.")
+        _gemini_failed = True
 
-    # ── Try Gemini (free) ─────────────────────────────────────────────────────
-    if not _gemini_failed:
-        if config.GEMINI_API_KEY and not config.GEMINI_API_KEY.startswith("your_"):
-            client = _get_gemini_client()
-            if client:
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        full_prompt = f"{_SYSTEM_PROMPT}\n\n---\n\n{user_content}"
-                        # Use standard generate_content, instruct to return JSON
-                        response = client.models.generate_content(
-                            model='gemini-flash-latest',
-                            contents=full_prompt,
-                            config={"temperature": 0.1, "response_mime_type": "application/json"}
-                        )
-                        raw = response.text.strip()
-                        result = _parse_llm_response(raw)
-                        _log_debug(email, raw, result, "Gemini")
-                        
-                        # Add a 4.5 second delay after successful call to respect 15 requests per minute limit
-                        time.sleep(4.5)
-                        
-                        if not result.get("is_job_application", True):
-                            return _fallback_result(email, reason="Filtered by AI: " + result.get("reasoning", ""))
+    if not _gemini_failed and _get_gemini_client():
+        user_content = (
+            f"Subject: {subject}\n\n"
+            f"From: {sender}\n\n"
+            f"Body:\n{clean_text(body, max_chars=3000)}"
+        )
+        raw = _call_gemini_with_retries(f"{_SYSTEM_PROMPT}\n\n---\n\n{user_content}")
+        if raw is not None:
+            _consecutive_failures = 0
+            result = _parse_llm_response(raw)
+            _log_debug(email, raw, result, "Gemini")
+            _sleep(GEMINI_PACING_SECONDS)
+            return _finalise_gemini_result(email, result)
 
-                        # Platform-leakage fix & Name Normalization
-                        raw_co = result.get("company", "Unknown")
-                        if not raw_co or raw_co.lower() in PLATFORM_KEYWORDS:
-                            extracted_co = _extract_company(sender, subject, body)
-                            if extracted_co != "Unknown":
-                                raw_co = extracted_co
+        if not _gemini_failed:
+            _consecutive_failures += 1
+            if _consecutive_failures >= GEMINI_BREAKER_THRESHOLD:
+                _gemini_failed = True
+                logger.warning(
+                    "Gemini failed for %d emails in a row; using the keyword fallback for the rest of this run.",
+                    _consecutive_failures,
+                )
 
-                        cleaned_co = clean_company_name(raw_co)
-                        cleaned_ro = clean_role_name(result.get("role", "Unknown"), subject=subject, company=cleaned_co)
-                        
-                        threat = evaluate_threat(company_name=cleaned_co, subject=subject, body=body, sender=sender)
-                        result["company"] = cleaned_co
-                        result["role"] = cleaned_ro
-                        result["scam_risk"] = threat.get("scam_risk", "Unknown")
-                        result["risk_notes"] = threat.get("risk_notes", "")
-
-                        if threat.get("scam_risk") in ("High", "Medium") and threat.get("risk_notes"):
-                            result["notes"] = f"[{threat['scam_risk'].upper()} RISK: {threat['risk_notes']}] {result.get('notes', '')}"[:2000]
-
-                        logger.info(
-                            "Gemini classified [%s] -> status=%s company=%s role=%s scam_risk=%s",
-                            subject[:50], result.get("status"), result.get("company"), result.get("role"), result.get("scam_risk")
-                        )
-                        return result
-                    except Exception as exc:
-                        exc_str = str(exc)
-                        if "quota" in exc_str.lower() or "429" in exc_str or "rate" in exc_str.lower():
-                            # Attempt to rotate client immediately if multiple keys are configured
-                            if rotate_gemini_client():
-                                logger.info("Retrying classification immediately with the newly rotated API key...")
-                                client = _get_gemini_client()
-                                continue
-                                
-                            if attempt < max_retries - 1:
-                                wait_time = 15 * (attempt + 1)
-                                logger.warning(f"Gemini rate limit hit. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries - 1}...")
-                                time.sleep(wait_time)
-                            else:
-                                logger.warning("Gemini rate limit hit maximum retries; falling back to keyword classifier.")
-                        else:
-                            _gemini_failed = True
-                            logger.warning("Gemini failed (%s); using keyword fallback.", exc)
-                            break
-        else:
-            if not _gemini_failed:
-                logger.info("Gemini not configured (GEMINI_API_KEY not set) — using keyword fallback.")
-            _gemini_failed = True
-
-    # ── Keyword fallback ──────────────────────────────────────────────────────
+    # Tier 3: keyword fallback
     result = _keyword_classify(email)
     _log_debug(email, "Keyword fallback", result, "Keyword")
+    return result
+
+
+def _call_gemini_with_retries(prompt: str) -> Optional[str]:
+    """
+    Call Gemini and return the raw JSON text, or None if this email should use
+    the fallback. Sets the run-wide circuit breaker on configuration errors.
+    """
+    global _gemini_failed
+
+    for attempt in range(GEMINI_MAX_ATTEMPTS):
+        client = _get_gemini_client()
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config={"temperature": 0.1, "response_mime_type": "application/json"},
+            )
+            raw = (response.text or "").strip()
+            if not raw:
+                raise ValueError("Empty Gemini response (possibly blocked by safety filters)")
+            return raw
+        except Exception as exc:
+            kind = _gemini_error_kind(exc)
+            if kind == "fatal":
+                _gemini_failed = True
+                logger.error("Gemini configuration error (%s); disabling Gemini for this run.", exc)
+                return None
+            if kind == "per_email":
+                logger.warning("Gemini could not classify this email (%s); using keyword fallback.", exc)
+                return None
+            if kind == "rate_limit" and rotate_gemini_client():
+                logger.info("Gemini rate limit hit; retrying with the next API key.")
+                continue
+            if attempt < GEMINI_MAX_ATTEMPTS - 1:
+                wait_time = 15 * (attempt + 1) if kind == "rate_limit" else 2 ** (attempt + 1)
+                logger.warning("Gemini %s error (%s). Retrying in %ds (%d/%d)...",
+                               kind, exc, wait_time, attempt + 1, GEMINI_MAX_ATTEMPTS - 1)
+                _sleep(wait_time)
+            else:
+                logger.warning("Gemini %s error persisted after %d attempts; using keyword fallback.",
+                               kind, GEMINI_MAX_ATTEMPTS)
+    return None
+
+
+def _finalise_gemini_result(email: dict, result: dict) -> dict:
+    """Post-process a validated Gemini result: relevance, names, threat check."""
+    subject = email.get("subject", "")
+    body    = email.get("body", "")
+    sender  = email.get("sender", "")
+
+    if not result.get("is_job_application", True):
+        return _fallback_result(email, reason="Filtered by AI: " + result.get("reasoning", ""))
+
+    # Platform-leakage fix & name normalisation
+    raw_co = result.get("company", "Unknown")
+    if not raw_co or raw_co.lower() in PLATFORM_KEYWORDS:
+        extracted_co = _extract_company(sender, subject, body)
+        if extracted_co != "Unknown":
+            raw_co = extracted_co
+
+    cleaned_co = clean_company_name(raw_co)
+    cleaned_ro = clean_role_name(result.get("role", "Unknown"), subject=subject, company=cleaned_co)
+
+    threat = evaluate_threat(company_name=cleaned_co, subject=subject, body=body, sender=sender)
+    result["company"] = cleaned_co
+    result["role"] = cleaned_ro
+    result["scam_risk"] = threat.get("scam_risk", "Unknown")
+    result["risk_notes"] = threat.get("risk_notes", "")
+    result["method"] = "gemini"
+
+    if threat.get("scam_risk") in ("High", "Medium") and threat.get("risk_notes"):
+        result["notes"] = f"[{threat['scam_risk'].upper()} RISK: {threat['risk_notes']}] {result.get('notes', '')}"[:2000]
+
+    logger.info(
+        "Gemini classified [%s] -> status=%s company=%s role=%s scam_risk=%s",
+        subject[:50], result.get("status"), result.get("company"), result.get("role"), result.get("scam_risk")
+    )
     return result
 
 
@@ -274,10 +343,11 @@ def _parse_llm_response(raw: str) -> dict:
     confidence = data.get("confidence_score", 0)
     try:
         confidence = int(confidence)
-    except:
+    except (TypeError, ValueError):
         confidence = 0
         
-    if confidence < 70 and status not in ("Unknown", "Needs Review"):
+    # Low confidence goes to a human, except job digests (prompt rule: "unless it's a Job Opportunity")
+    if confidence < 70 and status not in ("Unknown", "Needs Review", "Job Opportunity"):
         status = "Needs Review"
         
     platform = data.get("platform", "Unknown")
@@ -387,6 +457,11 @@ PLATFORM_KEYWORDS = {
     "glassdoor", "jobrapido", "foundit", "workday", "greenhouse", "lever", "myworkday"
 }
 
+def _has_word(text: str, word: str) -> bool:
+    """Whole-word match, so short aliases like 'amat' or 'target' don't hit 'Kamath' or 'OnTarget'."""
+    return re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", text) is not None
+
+
 def clean_company_name(name: str) -> str:
     """Normalize extracted company string."""
     if not name:
@@ -402,7 +477,7 @@ def clean_company_name(name: str) -> str:
         return "L'Oréal"
     if "accenture" in name_lower:
         return "Accenture"
-    if "applied materials" in name_lower or "amat" in name_lower:
+    if "applied materials" in name_lower or _has_word(name_lower, "amat"):
         return "Applied Materials"
     if "bluestock" in name_lower:
         return "Bluestock Fintech"
@@ -410,7 +485,7 @@ def clean_company_name(name: str) -> str:
         return "GE Aerospace"
     if "electronic arts" in name_lower or name_lower.startswith("ea.") or name_lower == "ea":
         return "Electronic Arts"
-    if "jpmorgan" in name_lower or "jpmc" in name_lower:
+    if "jpmorgan" in name_lower or _has_word(name_lower, "jpmc"):
         return "JPMorganChase"
     if "walmart" in name_lower:
         return "Walmart"
@@ -418,19 +493,19 @@ def clean_company_name(name: str) -> str:
         return "DoorDash"
     if "barclays" in name_lower:
         return "Barclays"
-    if "target" in name_lower:
+    if _has_word(name_lower, "target"):
         return "Target"
     if "smytten" in name_lower:
         return "Smytten"
-    if "iit bhilai" in name_lower or "ccps" in name_lower:
+    if "iit bhilai" in name_lower or _has_word(name_lower, "ccps"):
         return "CCPS, IIT Bhilai"
     if "labmentix" in name_lower:
         return "Labmentix"
-    if "abekus" in name_lower or "stuti" in name_lower:
+    if "abekus" in name_lower or name_lower == "stuti":
         return "Abekus"
-    if "jobrapido" in name_lower or "grace" in name_lower:
+    if "jobrapido" in name_lower or name_lower == "grace":
         return "Jobrapido"
-    if "csk technologies" in name_lower or "csk" in name_lower:
+    if "csk technologies" in name_lower or _has_word(name_lower, "csk"):
         return "CSK Technologies"
     
     return name.strip()
@@ -649,6 +724,7 @@ def _keyword_classify(email: dict) -> dict:
         "interview_date": None,
         "recruiter_name": None,
         "confidence_score": 40, # Keyword is low confidence
+        "method":         "keyword",
         "notes":          notes,
         "scam_risk":      scam_risk,
         "risk_notes":     risk_notes,
@@ -666,5 +742,6 @@ def _fallback_result(email: dict, reason: str = "") -> dict:
         "interview_date": None,
         "recruiter_name": None,
         "confidence_score": 0,
+        "method":         "skipped",
         "notes":          f"Skipped: {reason}",
     }

@@ -4,15 +4,15 @@
 
 ### An autonomous AI-powered internship tracking system
 
-*Reads your Gmail → Classifies with Gemini AI → Detects scam companies → Updates Notion → Alerts you on Telegram — all automatically, with smart daily quota management.*
+*Reads your Gmail → Classifies with Gemini AI → Detects scam companies → Stores in Supabase → Alerts you on Telegram — all automatically, with smart daily quota management.*
 
 <br/>
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Gemini AI](https://img.shields.io/badge/Gemini_AI-2.5_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
-[![Notion](https://img.shields.io/badge/Notion-Database-000000?style=for-the-badge&logo=notion&logoColor=white)](https://notion.so)
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://core.telegram.org/bots)
-[![Next.js](https://img.shields.io/badge/Dashboard-Next.js_15-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Dashboard-Next.js_16-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
 [![GitHub Actions](https://img.shields.io/badge/CI/CD-GitHub_Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)](https://github.com/features/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
@@ -25,7 +25,7 @@
 Applying to internships means drowning in emails — confirmations, rejections, OAs, interview invites — across 10 different portals. **InternPulse automates all of that.**
 
 It silently monitors your Gmail inbox, uses Google Gemini AI to understand each email, and:
-- Logs the application to your **Notion database**
+- Logs the application to your **Supabase (PostgreSQL) database**
 - Sends you a **Telegram alert** with company scam analysis and interview prep tips
 - Picks out the best **job opportunities** from digest emails (Internshala, LinkedIn, Unstop)
 - Runs **daily or on-demand** via GitHub Actions, Web Dashboard, and Telegram — respecting configurable daily sync quotas
@@ -37,11 +37,12 @@ It silently monitors your Gmail inbox, uses Google Gemini AI to understand each 
 | Feature | Details |
 |:---|:---|
 | 🧠 **Gemini AI Classification** | Understands the intent of every email — Applied, Rejected, OA, Interview, Offer |
-| 🔡 **Keyword Fallback** | Zero downtime if Gemini is rate-limited — a robust keyword classifier takes over |
+| ✅ **Validated AI Output** | Gemini answers in JSON mode; statuses, platforms and confidence are checked against one shared status list |
+| 🔡 **Keyword Fallback** | Zero downtime if Gemini is rate-limited or unavailable — a keyword classifier takes over, and unresolved emails are retried later |
 | 🕵️ **Scam Company Detection** | Web-searches every new company and uses AI to flag High/Medium/Low scam risk |
 | 🎯 **Interview Prep Sheets** | Auto-generates tech stack, recent news & likely interview questions the moment you get an interview |
 | 💼 **Job Opportunity Digests** | Extracts the best AI/ML/Data roles from digest emails and sends instant Telegram alerts |
-| 📊 **Notion Dashboard** | Auto-creates rows, avoids duplicates, updates status as your application progresses |
+| 📊 **Supabase Database** | One row per company (UNIQUE canonical slug), safe re-runs, statuses never move backwards except for final outcomes (Rejected / Offer) |
 | 🔔 **Rich Telegram Alerts** | Beautifully formatted messages with emoji, company name, role, risk score, and prep tips |
 | 🌐 **Next.js Web Dashboard** | A cinematic dark-mode UI with Kanban board, funnel chart, activity timeline, and safety scanner |
 | ⏱️ **Daily Quota & On-Demand** | Daily sync schedule with calendar rollover, quota protection, and instant web/Telegram triggers |
@@ -60,7 +61,7 @@ Your Gmail Inbox
   utils.py               ← Pre-filters non-job emails (saves AI quota)
        │
        ▼
-  status_classifier.py   ← Gemini 2.5 Flash → Keyword fallback
+  status_classifier.py   ← Gemini Flash (JSON) → validation → keyword fallback
        │
        ├──→ company_researcher.py  ← DuckDuckGo + Gemini scam analysis
        │
@@ -94,8 +95,8 @@ Make sure you have:
 ### Step 2 — Clone & Install
 
 ```bash
-git clone https://github.com/chaitanyakumarAI/AI-Internship-Tracker.git
-cd AI-Internship-Tracker
+git clone https://github.com/chaitanyakumarAI/Intern-Pulse.git
+cd Intern-Pulse
 
 # Create virtual environment
 python -m venv .venv
@@ -199,7 +200,16 @@ On the **first run only**, a browser window will open asking you to sign in to G
 python test_setup.py
 ```
 
-You should see all tests passing. If any fail, the error message will tell you exactly what's wrong.
+You should see all checks passing. If any fail, the error message will tell you exactly what's wrong.
+
+To run the **offline test suite** (no Gmail, Gemini, Supabase or Telegram calls):
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+> `test_integration.py` is a separate live smoke check: it uses your real Gmail token, database and Telegram bot, so `pytest` never runs it.
 
 ---
 
@@ -226,7 +236,7 @@ You can control your application pipeline, check stats, and trigger Gmail scans 
 
 | Command | Action | Example |
 |---|---|---|
-| `/status <Company> <Status>` | Update job stage in Notion | `/status Google Offer` |
+| `/status <Company> <Status>` | Update job stage in the database | `/status Google Offer` |
 | `/list [limit]` | View latest applications and status badges | `/list 8` |
 | `/scan [days]` | Trigger an on-demand Gmail sync cycle | `/scan 7` |
 | `/quota` | Check remaining daily sync quota | `/quota` |
@@ -243,7 +253,7 @@ python telegram_bot.py
 
 ## ⚙️ GitHub Actions (Fully Cloud Automated — Recommended)
 
-This is the best way to run InternPulse — it runs automatically in the cloud every 3 hours for free.
+This is the best way to run InternPulse — it runs automatically in the cloud once a day (08:00 UTC) for free. Each run first executes the offline test suite, keeps its processed-email state in the Actions cache, and never overlaps with another run.
 
 ### Setup
 
@@ -253,15 +263,15 @@ This is the best way to run InternPulse — it runs automatically in the cloud e
 
 | Secret Name | Where to get it |
 |---|---|
-| `NOTION_API_KEY` | Your Notion integration token |
-| `NOTION_DATABASE_ID` | The ID from your Notion database URL |
+| `SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
+| `SUPABASE_KEY` | Supabase → Project Settings → API → `service_role` key |
 | `GEMINI_API_KEY` | From Google AI Studio |
 | `TELEGRAM_BOT_TOKEN` | From @BotFather on Telegram |
 | `TELEGRAM_CHAT_ID` | From @userinfobot on Telegram |
 | `GMAIL_CREDENTIALS_JSON` | Paste the **entire contents** of `credentials.json` |
 | `GMAIL_TOKEN_JSON` | Paste the **entire contents** of `token.json` (generated in Step 6) |
 
-4. Done! The workflow in `.github/workflows/tracker.yml` runs automatically every 3 hours.
+4. Done! The workflow in `.github/workflows/tracker.yml` runs automatically every day at 08:00 UTC.
 
 > **To trigger it manually:** Go to your repo → **Actions** tab → **AI Internship Tracker** → **Run workflow**
 
@@ -323,7 +333,13 @@ AI-Internship-Tracker/
 │   ├── migrate_notion_to_supabase.py # One-time migration & seed utility
 │   ├── reprocess.py            # Wipes cache & reprocesses last 100 emails
 │   ├── test_setup.py           # Smoke test for your environment setup
-│   └── test_integration.py     # Full integration test suite (31 tests)
+│   └── test_integration.py     # Live integration smoke checks (31 checks; real services)
+│
+├── 🧪 Tests & Evaluation
+│   ├── tests/                  # Offline pytest suite (stubbed config, temp SQLite, fake Gemini)
+│   ├── eval/                   # Accuracy evaluation: export → label → score
+│   ├── pytest.ini
+│   └── requirements-dev.txt
 │
 ├── 🌐 Web Dashboard (Next.js 15)
 │   └── web/
@@ -332,7 +348,8 @@ AI-Internship-Tracker/
 │       └── package.json
 │
 ├── ⚙️ Automation
-│   └── .github/workflows/tracker.yml   # GitHub Actions (runs daily at 08:00 UTC or manual dispatch)
+│   ├── .github/workflows/tracker.yml   # Daily sync (08:00 UTC or manual); runs offline tests first
+│   └── .github/workflows/build-apk.yml # Builds the Android (Capacitor) debug APK
 │
 ├── .env.example                # Template — copy to .env and fill in keys
 ├── credentials.json            # Gmail OAuth client (never commit!)
@@ -340,6 +357,35 @@ AI-Internship-Tracker/
 ├── requirements.txt
 └── LICENSE
 ```
+
+---
+
+## 🎯 Measuring Classification Accuracy
+
+`eval/evaluate_classifier.py` scores the classifier against emails you label yourself. Email content and labels stay in `eval/data/` (git-ignored).
+
+```bash
+# 1. Export a sample of your job emails (reads Gmail, no AI calls)
+python eval/evaluate_classifier.py export --count 100 --days 180
+
+# 2. Fill in eval/data/labels.csv: is_job (yes/no), status, company, role
+
+# 3. Score the keyword tier (offline), or both tiers (one Gemini call per email)
+python eval/evaluate_classifier.py run
+python eval/evaluate_classifier.py run --tier both
+```
+
+The report (`eval/results/report-*.md`) shows relevance precision/recall, status accuracy, coverage (share not sent to *Needs Review*), per-status precision/recall/F1, macro-F1, a confusion matrix, company/role accuracy and end-to-end record accuracy.
+
+---
+
+## 🔐 Security Settings
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `TELEGRAM_CHAT_ID` | Python + Vercel | The bot only obeys this chat. If it is unset, all commands are refused |
+| `TELEGRAM_WEBHOOK_SECRET` | Python (when registering the webhook) + Vercel | Telegram sends it with every update; the webhook rejects requests without it |
+| `SYNC_API_TOKEN` | Render + Vercel | Required as `Authorization: Bearer …` to trigger `/api/sync` on the Render worker; `?force=true` only works with it |
 
 ---
 
@@ -395,11 +441,12 @@ Established fintech firm with active LinkedIn and Glassdoor reviews.
 |---|---|
 | **Browser doesn't open on first run** | Run `python main.py` from a terminal that can open a browser window (not SSH) |
 | **`invalid_grant` Gmail error** | Your token expired — run `python main.py` again to re-authenticate, then update `GMAIL_TOKEN_JSON` in GitHub secrets |
-| **Notion 404 / unauthorized** | Check `NOTION_DATABASE_ID` and make sure you clicked **Connect to → your integration** inside Notion |
+| **Supabase errors / data only in SQLite** | Check `SUPABASE_URL` / `SUPABASE_KEY` and that you ran `supabase_schema.sql`. Without them the pipeline falls back to `data/jobs.db` |
 | **No Telegram messages** | Run `python -c "import telegram_notifier; telegram_notifier.send_message('test')"` to verify connectivity |
 | **Gemini 429 rate limit** | Normal — the keyword fallback activates automatically, no action needed |
 | **All emails show `Unknown`** | Gemini may be down — wait an hour or check [status.cloud.google.com](https://status.cloud.google.com) |
 | **GitHub Action fails** | Check that all 7 secrets are added correctly. Go to **Actions → failed run → logs** to see the exact error |
+| **`pytest` opens an unrelated window or fails with `py.path`** | A personal script named `py.py` in your Python installation folder is shadowing pytest's `py` module — rename that script |
 
 ---
 
@@ -427,6 +474,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 If InternPulse helped you, please ⭐ **star the repo** — it helps others find it!
 
-[⭐ Star on GitHub](https://github.com/chaitanyakumarAI/AI-Internship-Tracker) &nbsp;·&nbsp; [🐛 Report a Bug](https://github.com/chaitanyakumarAI/AI-Internship-Tracker/issues) &nbsp;·&nbsp; [💡 Request a Feature](https://github.com/chaitanyakumarAI/AI-Internship-Tracker/issues)
+[⭐ Star on GitHub](https://github.com/chaitanyakumarAI/Intern-Pulse) &nbsp;·&nbsp; [🐛 Report a Bug](https://github.com/chaitanyakumarAI/Intern-Pulse/issues) &nbsp;·&nbsp; [💡 Request a Feature](https://github.com/chaitanyakumarAI/Intern-Pulse/issues)
 
 </div>

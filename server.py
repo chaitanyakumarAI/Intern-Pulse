@@ -11,12 +11,16 @@ Endpoints:
   GET  /api/quota   -> Current daily sync quota usage
   POST /api/sync    -> Trigger pipeline sync (asynchronous)
   GET  /api/sync    -> Trigger pipeline sync
+
+If SYNC_API_TOKEN is set, /api/sync requires "Authorization: Bearer <token>".
+?force=true (bypass the daily quota) is honoured only with a valid token.
 """
 import os
 import sys
 import json
 import time
 import logging
+import hmac
 import threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -24,11 +28,21 @@ from datetime import datetime, timezone
 
 import config
 from config import setup_logging
-from sync_quota import can_sync, get_quota, record_sync
+from sync_quota import can_sync, get_quota
 
 logger = setup_logging("server")
 
 _sync_lock = threading.Lock()
+SYNC_API_TOKEN = os.environ.get("SYNC_API_TOKEN", "").strip()
+
+
+def _token_status(headers) -> str:
+    """Return 'valid', 'missing' or 'invalid' for the request's bearer token."""
+    auth = headers.get("Authorization", "")
+    supplied = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    if not SYNC_API_TOKEN or not supplied:
+        return "missing"
+    return "valid" if hmac.compare_digest(supplied, SYNC_API_TOKEN) else "invalid"
 _last_sync_time = None
 _last_sync_status = "idle"
 
@@ -58,8 +72,7 @@ def _run_worker_sync(force: bool = False) -> dict:
         
         try:
             from main import run_once
-            run_once()
-            record_sync()
+            run_once(force=force)  # run_once records the quota usage itself
             _last_sync_time = datetime.now(timezone.utc).isoformat()
             _last_sync_status = "success"
             logger.info("Background sync completed successfully.")
@@ -124,8 +137,12 @@ class HealthAndSyncHandler(BaseHTTPRequestHandler):
         elif path == "/api/quota":
             self._send_json(200, get_quota())
         elif path == "/api/sync":
+            token = _token_status(self.headers)
+            if SYNC_API_TOKEN and token != "valid":
+                self._send_json(401, {"error": "Unauthorized"})
+                return
             params = parse_qs(parsed.query)
-            force = params.get("force", ["false"])[0].lower() in ("true", "1", "yes")
+            force = token == "valid" and params.get("force", ["false"])[0].lower() in ("true", "1", "yes")
             # Run sync in thread so HTTP request returns quickly
             thread = threading.Thread(target=_run_worker_sync, args=(force,), daemon=True)
             thread.start()
@@ -142,6 +159,9 @@ class HealthAndSyncHandler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
 
         if path == "/api/sync":
+            if SYNC_API_TOKEN and _token_status(self.headers) != "valid":
+                self._send_json(401, {"error": "Unauthorized"})
+                return
             thread = threading.Thread(target=_run_worker_sync, args=(False,), daemon=True)
             thread.start()
             self._send_json(202, {

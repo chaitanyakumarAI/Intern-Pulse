@@ -5,11 +5,12 @@ Pipeline:
   1. Check daily sync quota (enforces DAILY_SYNC_LIMIT)
   2. Authenticate Gmail
   3. Fetch latest emails (skip already-processed ones)
-  4. For each new email:
+  4. For each new email (oldest first, so later emails win):
      a. Job-email pre-filter
-     b. AI-classify (OpenAI -> Gemini -> keyword fallback)
-     c. Upsert into Notion (create or update)
-     d. Send Telegram alert if status is noteworthy
+     b. Classify (Gemini -> keyword fallback), then validate / fill gaps
+     c. Research the company (scam risk, interview prep)
+     d. Upsert into the database (Supabase, SQLite fallback)
+     e. Send Telegram alert if the status changed
   5. Mark emails as processed (persist to data/processed_emails.json)
   6. Print / log summary stats
 
@@ -45,6 +46,13 @@ def _update_pipeline_status(data: dict) -> None:
         logger.warning("Failed to write pipeline status file: %s", e)
 
 
+_RISK_RANK = {"High": 3, "Medium": 2, "Low": 1}
+
+
+def _risk_rank(risk: str | None) -> int:
+    return _RISK_RANK.get(risk or "", 0)
+
+
 def run_once(days: str | None = None, force: bool = False) -> dict:
     """
     Execute one full scan-classify-upsert cycle.
@@ -54,7 +62,8 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
     import time
     from datetime import datetime, timezone
     from gmail_reader import get_gmail_service, fetch_messages
-    from status_classifier import classify_email_ai, reset_gemini_session, _extract_company, _extract_role
+    from status_classifier import (classify_email_ai, reset_gemini_session, is_gemini_configured,
+                                   _extract_company, _extract_role)
     from db_manager import upsert_application
     from telegram_notifier import notify_status_change, notify_summary
     from utils import is_job_related
@@ -75,9 +84,6 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
             "quota": quota,
         })
         return {"status": "limit_reached", "quota": quota}
-
-    # Record quota usage for this sync run
-    quota = record_sync()
 
     # Apply days filter if provided via parameter or environment
     effective_days = days or os.environ.get("GMAIL_DAYS", "").strip()
@@ -137,6 +143,8 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
         })
         return stats
 
+    # Record quota usage only once Gmail access actually worked
+    quota = record_sync()
     stats["fetched"] = len(emails)
     if not emails:
         logger.info("No emails fetched from Gmail.")
@@ -152,6 +160,9 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
     # â”€â”€ Step 3: Filter already-processed emails â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     processed_ids = get_processed_ids()
     new_emails = [e for e in emails if e.get("id") not in processed_ids]
+    # Gmail returns newest first; process oldest first so the latest email
+    # about a company decides its final status.
+    new_emails.sort(key=lambda e: e.get("date_iso") or "")
     stats["new"] = len(new_emails)
 
     logger.info(
@@ -199,6 +210,10 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
             # Do NOT mark as processed on unexpected exceptions so it can retry later
             continue
 
+        # Emails the keyword fallback couldn't resolve are retried on a later run
+        # (when Gemini may be available) instead of being marked processed.
+        retry_later = classification.get("method") == "keyword" and is_gemini_configured()
+
         # b) Validation Layer with Smart Fallbacks
         company = classification.get("company") or "Unknown"
         role = classification.get("role") or "Unknown"
@@ -229,13 +244,15 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
             else:
                 logger.info("  -> Skipping insertion: status remains Unknown for [%s]", subject[:50])
                 stats["skipped"] += 1
-                newly_processed_ids.append(gmail_id)
+                if not retry_later:
+                    newly_processed_ids.append(gmail_id)
                 continue
 
         if company == "Unknown":
             logger.info("  -> Skipping insertion: company remains Unknown for [%s]", subject[:50])
             stats["skipped"] += 1
-            newly_processed_ids.append(gmail_id)
+            if not retry_later:
+                newly_processed_ids.append(gmail_id)
             continue
 
         logger.info(
@@ -249,8 +266,11 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
         # AI Company Research & Scam Check
         from company_researcher import analyze_company
         analysis = analyze_company(company, role, status)
-        classification["scam_risk"] = analysis["scam_risk"]
-        classification["risk_notes"] = analysis["risk_notes"]
+        # Keep the more severe of the email-level check (fee requests, spoofed
+        # senders…) and the company-level research, so neither hides the other.
+        if _risk_rank(analysis["scam_risk"]) >= _risk_rank(classification.get("scam_risk")):
+            classification["scam_risk"] = analysis["scam_risk"]
+            classification["risk_notes"] = analysis["risk_notes"]
         classification["prep_sheet"] = analysis["prep_sheet"]
             
         # c) Handle "Job Opportunity" digests specifically
@@ -263,7 +283,7 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
             if is_processed(opportunity_id):
                 logger.info("  -> Job Opportunity already notified recently: %s at %s. Skipping.", role, company)
             else:
-                logger.info("  -> Found a new Job Opportunity: %s at %s. Sending Telegram alert but skipping Notion.", role, company)
+                logger.info("  -> Found a new Job Opportunity: %s at %s. Sending Telegram alert (not stored).", role, company)
                 try:
                     notify_status_change(email, classification, action="opportunity")
                     mark_processed([opportunity_id])
@@ -298,11 +318,11 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
                 newly_processed_ids.append(gmail_id)
 
             except Exception as exc:
-                logger.error("Notion upsert error for [%s]: %s", subject[:50], exc)
+                logger.error("Database upsert error for [%s]: %s", subject[:50], exc)
                 stats["errors"] += 1
         else:
             logger.info(
-                "    (Notion not configured â€” classification only: %s)",
+                "    (Database not configured - classification only: %s)",
                 json.dumps(classification, indent=None),
             )
             stats["skipped"] += 1
@@ -342,7 +362,7 @@ def run_once(days: str | None = None, force: bool = False) -> dict:
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="AI Job Tracker - Gmail Scanner & Notion Synchronizer")
+    parser = argparse.ArgumentParser(description="InternPulse - Gmail scanner and application tracker")
     parser.add_argument("--days", "-d", type=str, default=None, help="Scan emails newer than N days (e.g. 7, 14, 30)")
     parser.add_argument("--force", "-f", action="store_true", help="Bypass daily Gmail sync limit")
     args = parser.parse_args()

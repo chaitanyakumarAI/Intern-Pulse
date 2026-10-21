@@ -28,3 +28,8 @@ Thumbs.db
 # Temporary dev artifacts
 web/public/screenshots/
 *.tempmediaStorage/
+
+# Accuracy evaluation: labelled emails and per-email predictions are private
+eval/data/
+eval/results/
+.pytest_cache/

@@ -119,6 +119,8 @@ DATA_DIR.mkdir(exist_ok=True)
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 # ── Application status labels (canonical) ───────────────────────────────────
+# Single source of truth: the Gemini prompt, the response validator and the
+# dashboard all derive their allowed statuses from this list.
 STATUS_LABELS = [
     "Applied",
     "Under Review",
@@ -127,6 +129,8 @@ STATUS_LABELS = [
     "Rejected",
     "Offer",
     "Ghosted",
+    "Needs Review",
+    "Job Opportunity",
     "Unknown",
 ]
 

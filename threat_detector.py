@@ -153,7 +153,8 @@ def evaluate_threat(
     if sender_domain in FREE_PUBLIC_DOMAINS:
         # Check if the company claims to be a recognized enterprise
         for ent in ENTERPRISE_COMPANIES:
-            if ent in comp_clean:
+            # Whole-word match: "ea" must not match "DataLearn", nor "intel" "Intelligent".
+            if re.search(rf"(?<![a-z0-9]){re.escape(ent)}(?![a-z0-9])", comp_clean):
                 return {
                     "scam_risk": "High",
                     "risk_notes": f"Domain Spoofing Alert: Recruiter claims to represent {company_name} but is sending from a public @{sender_domain} account instead of an official corporate domain.",

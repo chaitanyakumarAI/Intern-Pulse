@@ -3,7 +3,7 @@ telegram_bot.py — Interactive 2-Way Telegram Bot for AI Job Tracker.
 
 Allows you to interact with @InternSlaveBot directly from your phone/desktop:
   /start or /help        — Show available commands and instructions
-  /status <co> <status>  — Update job status in Notion (e.g. /status Google Offer)
+  /status <co> <status>  — Update job status in the database (e.g. /status Google Offer)
   /list [limit]          — View recent applications and stages
   /quota                 — View today's remaining Gmail sync quota
   /scan [days]           — Trigger an on-demand Gmail inbox sync
@@ -13,6 +13,7 @@ Usage:
   .venv\\Scripts\\python.exe telegram_bot.py          # Continuous long-polling daemon
   .venv\\Scripts\\python.exe telegram_bot.py --once   # Poll single update batch & exit
 """
+import os
 import sys
 import time
 import json
@@ -102,7 +103,8 @@ def is_authorized(chat_id: str | int) -> bool:
     expected = str(config.TELEGRAM_CHAT_ID).strip()
     actual = str(chat_id).strip()
     if not expected or expected.startswith("your_"):
-        return True  # If chat ID not restricted, allow
+        logger.error("TELEGRAM_CHAT_ID is not set; refusing all commands.")
+        return False  # fail closed: an owner-only bot must know its owner
     return actual == expected
 
 
@@ -339,7 +341,7 @@ def _execute_scan_worker(chat_id: str | int, days: Optional[str]) -> None:
             f"🆕 <b>New Applications:</b> {c}\n"
             f"🔄 <b>Stages Updated:</b> {u}\n"
             f"⏱️ <b>Quota Left Today:</b> {quota['remaining']} / {quota['daily_limit']}\n\n"
-            f"<i>Check your Notion or Web Dashboard for real-time cards.</i>"
+            f"<i>Check the Web Dashboard for real-time cards.</i>"
         )
         send_tg_message(chat_id, text)
     except Exception as exc:
@@ -501,7 +503,11 @@ def set_webhook(url: str) -> bool:
         return False
     endpoint = _BASE_URL.format(token=token, method="setWebhook")
     try:
-        resp = requests.post(endpoint, json={"url": url}, timeout=15)
+        payload = {"url": url}
+        secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+        if secret:
+            payload["secret_token"] = secret  # Telegram echoes it in X-Telegram-Bot-Api-Secret-Token
+        resp = requests.post(endpoint, json=payload, timeout=15)
         logger.info("Set webhook to %s: %s", url, resp.json())
         return resp.ok
     except Exception as exc:

@@ -31,6 +31,8 @@ _adapter = HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.3, status_for
 _session.mount("https://", _adapter)
 _session.mount("http://", _adapter)
 
+# Progress rank of non-terminal statuses: an application never moves backwards
+# (e.g. a late "Applied" confirmation can't undo an "Interview Scheduled").
 STATUS_HIERARCHY = {
     "Offer": 7,
     "Interview Scheduled": 6,
@@ -44,6 +46,33 @@ STATUS_HIERARCHY = {
     "Unknown": 0
 }
 
+# Terminal outcomes override any in-progress stage. Offer beats Rejected because
+# one row tracks a whole company and a lost offer is the costlier mistake.
+TERMINAL_STATUSES = {"Offer", "Rejected"}
+# A new application cycle (e.g. re-applying after a rejection) reopens a row.
+REOPENING_STATUSES = {"Applied", "Under Review", "OA Sent", "Interview Scheduled"}
+
+
+def resolve_status(old_status: str, new_status: str) -> str:
+    """
+    Decide the stored status when a new email arrives for an existing row.
+    Emails are processed oldest-first (main.run_once), so `new_status` is the
+    more recent signal.
+    """
+    if not new_status or new_status == "Unknown" or new_status == old_status:
+        return old_status or new_status
+    if new_status == "Offer":
+        return "Offer"
+    if new_status == "Rejected":
+        return old_status if old_status == "Offer" else "Rejected"
+    if old_status == "Rejected" and new_status in REOPENING_STATUSES:
+        return new_status
+    if old_status in TERMINAL_STATUSES:
+        return old_status
+    if STATUS_HIERARCHY.get(new_status, 0) >= STATUS_HIERARCHY.get(old_status, 0):
+        return new_status
+    return old_status
+
 def normalize_slug(name: str) -> str:
     """Create a unified comparison slug for company names."""
     if not name:
@@ -53,23 +82,24 @@ def normalize_slug(name: str) -> str:
     slug = re.sub(r"\s+(?:human resources|workday notifications|job alerts|careers|recruiting|talent acquisition|recruitment|team|hr|fintech|technologies|pvt|ltd|inc|corp|opc private limted)$", "", slug)
     slug = re.sub(r"[^a-z0-9]", "", slug)
     
-    # Canonical aliases
-    if "loreal" in slug or "loral" in slug: return "loreal"
+    # Canonical aliases. Short tokens are matched exactly (or as a prefix) so that
+    # e.g. "Kamath Analytics" isn't merged into Applied Materials ("amat").
+    if "loreal" in slug or slug.startswith("loral"): return "loreal"
     if "accenture" in slug: return "accenture"
-    if "appliedmaterials" in slug or "amat" in slug: return "appliedmaterials"
+    if "appliedmaterials" in slug or slug == "amat": return "appliedmaterials"
     if "bluestock" in slug: return "bluestock"
-    if "geaerospace" in slug or "general electric" in slug: return "geaerospace"
+    if "geaerospace" in slug or "generalelectric" in slug: return "geaerospace"
     if "electronicarts" in slug or slug == "ea": return "electronicarts"
-    if "jpmorgan" in slug or "jpmc" in slug: return "jpmorganchase"
+    if "jpmorgan" in slug or slug.startswith("jpmc"): return "jpmorganchase"
     if "doordash" in slug: return "doordash"
     if "walmart" in slug: return "walmart"
     if "barclays" in slug: return "barclays"
-    if "target" in slug: return "target"
+    if slug == "target" or slug.startswith("targetcorp"): return "target"
     if "smytten" in slug: return "smytten"
-    if "iitbhilai" in slug or "ccps" in slug: return "ccpsiitbhilai"
-    if "jobrapido" in slug or "grace" in slug: return "jobrapido"
-    if "abekus" in slug or "stuti" in slug: return "abekus"
-    if "csk" in slug: return "csktechnologies"
+    if "iitbhilai" in slug or slug.startswith("ccps"): return "ccpsiitbhilai"
+    if "jobrapido" in slug or slug == "grace": return "jobrapido"
+    if "abekus" in slug or slug == "stuti": return "abekus"
+    if slug == "csk" or slug.startswith("csktech"): return "csktechnologies"
     if "quickhyre" in slug: return "quickhyre"
     if "swiggy" in slug: return "swiggy"
     if "labmentix" in slug: return "labmentix"
@@ -209,7 +239,7 @@ def find_application_by_slug(slug: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
-def upsert_application(email: dict, classification: dict) -> dict:
+def upsert_application(email: dict, classification: dict, _retry_on_conflict: bool = True) -> dict:
     """
     Insert or update an application row.
     Prevents duplicate entries via canonical company_slug matching.
@@ -237,9 +267,7 @@ def upsert_application(email: dict, classification: dict) -> dict:
     if existing:
         row_id = existing["id"]
         old_status = existing.get("status", "Unknown")
-        old_rank = STATUS_HIERARCHY.get(old_status, 0)
-        new_rank = STATUS_HIERARCHY.get(status, 0)
-        effective_status = status if new_rank >= old_rank else old_status
+        effective_status = resolve_status(old_status, status)
 
         # If previous role was generic, upgrade it to new specific role
         old_role = existing.get("role", "")
@@ -259,7 +287,9 @@ def upsert_application(email: dict, classification: dict) -> dict:
         if scam_risk and scam_risk != "Unknown": update_payload["scam_risk"] = scam_risk
         if risk_notes: update_payload["risk_notes"] = risk_notes
         if prep_sheet: update_payload["prep_sheet"] = prep_sheet
-        if notes: update_payload["notes"] = f"{existing.get('notes', '')}\n{notes}".strip()
+        old_notes = existing.get("notes") or ""
+        if notes and notes not in old_notes:
+            update_payload["notes"] = f"{old_notes}\n{notes}".strip()
 
         sb = _get_supabase_config()
         if sb:
@@ -269,6 +299,7 @@ def upsert_application(email: dict, classification: dict) -> dict:
                 if resp.status_code in (200, 204):
                     logger.info("Supabase updated row %s (%s): %s -> %s", row_id[:8], company, old_status, effective_status)
                     return {"action": "updated", "id": row_id, "status_changed": status_changed}
+                logger.warning("Supabase update returned %d: %s. Falling back to SQLite.", resp.status_code, resp.text[:300])
             except Exception as e:
                 logger.warning("Supabase update failed: %s", e)
 
@@ -317,6 +348,12 @@ def upsert_application(email: dict, classification: dict) -> dict:
                     logger.info("Supabase created application %s: %s @ %s [%s]", row_id[:8], role, company, status)
                     _sync_json_backup()
                     return {"action": "created", "id": row_id, "status_changed": True}
+                if resp.status_code == 409 and _retry_on_conflict:
+                    # Another run inserted this company between our lookup and insert
+                    # (UNIQUE company_slug). Re-run once so the existing row is updated.
+                    logger.info("Supabase insert conflict for '%s'; updating the existing row instead.", slug)
+                    return upsert_application(email, classification, _retry_on_conflict=False)
+                logger.warning("Supabase insert returned %d: %s. Falling back to SQLite.", resp.status_code, resp.text[:300])
             except Exception as e:
                 logger.warning("Supabase insert failed: %s", e)
 

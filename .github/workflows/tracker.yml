@@ -6,10 +6,16 @@ on:
     - cron: "0 8 * * *"
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
+# Never run two syncs at once (they would race on the same records)
+concurrency:
+  group: internpulse-sync
+  cancel-in-progress: false
+
 jobs:
   run-tracker:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 30
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -21,13 +27,27 @@ jobs:
           cache: "pip"
 
       - name: Install Dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
+
+      # Offline tests only: no Gmail, Gemini, Supabase or Telegram calls
+      - name: Run Offline Tests
+        run: pytest
+
+      # Runners start empty; keep the processed-email set and company research
+      # cache between runs so emails and job alerts aren't handled twice.
+      - name: Restore Pipeline State
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/processed_emails.json
+            data/company_cache.json
+          key: internpulse-state-${{ github.run_id }}
+          restore-keys: internpulse-state-
 
       - name: Run Tracker
         env:
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

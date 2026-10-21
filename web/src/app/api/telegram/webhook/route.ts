@@ -146,6 +146,13 @@ async function fetchPipelineStats() {
 
 export async function POST(req: Request) {
   try {
+    // Reject requests that don't carry the secret registered with setWebhook
+    // (secret_token), so only Telegram can drive this endpoint.
+    const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    if (webhookSecret && req.headers.get('x-telegram-bot-api-secret-token') !== webhookSecret) {
+      return NextResponse.json({ ok: false }, { status: 401 });
+    }
+
     const update = await req.json();
 
     // Ignore edits or non-messages
@@ -156,9 +163,13 @@ export async function POST(req: Request) {
     const chatId = update.message.chat.id;
     const text = update.message.text.trim();
 
-    // Optional chat authorization check
+    // Owner-only bot: fail closed if the owner's chat ID isn't configured
     const authChatId = process.env.TELEGRAM_CHAT_ID;
-    if (authChatId && !authChatId.startsWith('your_') && String(chatId) !== authChatId) {
+    if (!authChatId || authChatId.startsWith('your_')) {
+      console.error('TELEGRAM_CHAT_ID is not set; ignoring Telegram command.');
+      return NextResponse.json({ ok: true });
+    }
+    if (String(chatId) !== authChatId) {
       await sendTelegramMessage(chatId, '⛔ <b>Unauthorized access.</b> This bot is restricted to its owner.');
       return NextResponse.json({ ok: true });
     }
@@ -298,7 +309,11 @@ export async function POST(req: Request) {
         'Parsed applications will be written to Supabase in real time.'
       );
       try {
-        const resp = await fetch(`${workerUrl}/api/sync`, { method: 'POST' });
+        const syncToken = process.env.SYNC_API_TOKEN;
+        const resp = await fetch(`${workerUrl}/api/sync`, {
+          method: 'POST',
+          headers: syncToken ? { Authorization: `Bearer ${syncToken}` } : {},
+        });
         if (!resp.ok) {
           await sendTelegramMessage(chatId, `⚠️ Cloud worker returned status ${resp.status}. Please check Render logs.`);
         }

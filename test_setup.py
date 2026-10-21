@@ -29,8 +29,8 @@ else:
 # ── 2. Required packages ──────────────────────────────────────────────────────
 required = [
     "google.auth", "googleapiclient", "google_auth_oauthlib",
-    "dotenv", "pandas", "requests",
-    "openai", "bs4",
+    "dotenv", "requests", "google.genai",
+    "bs4", "lxml", "duckduckgo_search",
 ]
 
 print("\nChecking imports…")
