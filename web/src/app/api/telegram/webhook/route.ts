@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { workerFetch } from '@/lib/worker';
+
+// Room for a Render free-tier cold start when /scan or /quota wakes the worker.
+export const maxDuration = 60;
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -301,7 +305,6 @@ export async function POST(req: Request) {
         '<i>Use <code>/list</code> to see recent updates or <code>/status &lt;Co&gt; &lt;Stage&gt;</code> to advance.</i>';
       await sendTelegramMessage(chatId, msg);
     } else if (cmdToken === '/scan' || cmdToken === '/sync') {
-      const workerUrl = process.env.RENDER_WORKER_URL || 'https://ai-job-tracker-worker.onrender.com';
       await sendTelegramMessage(
         chatId,
         '⚡ <b>Initiating Gmail Inbox Sync...</b>\n\n' +
@@ -309,11 +312,7 @@ export async function POST(req: Request) {
         'Parsed applications will be written to Supabase in real time.'
       );
       try {
-        const syncToken = process.env.SYNC_API_TOKEN;
-        const resp = await fetch(`${workerUrl}/api/sync`, {
-          method: 'POST',
-          headers: syncToken ? { Authorization: `Bearer ${syncToken}` } : {},
-        });
+        const resp = await workerFetch('/api/sync', { method: 'POST' });
         if (!resp.ok) {
           await sendTelegramMessage(chatId, `⚠️ Cloud worker returned status ${resp.status}. Please check Render logs.`);
         }
@@ -331,9 +330,8 @@ export async function POST(req: Request) {
         '<i>Track your applications with 3D visuals, threat detection, and pipeline velocity.</i>'
       );
     } else if (cmdToken === '/quota' || cmdToken === '/limit') {
-      const workerUrl = process.env.RENDER_WORKER_URL || 'https://ai-job-tracker-worker.onrender.com';
       try {
-        const resp = await fetch(`${workerUrl}/api/quota`);
+        const resp = await workerFetch('/api/quota');
         if (resp.ok) {
           const q = await resp.json();
           await sendTelegramMessage(

@@ -45,11 +45,18 @@ def _token_status(headers) -> str:
     return "valid" if hmac.compare_digest(supplied, SYNC_API_TOKEN) else "invalid"
 _last_sync_time = None
 _last_sync_status = "idle"
+_last_sync_stats = None
 
 
-def _run_worker_sync(force: bool = False) -> dict:
+def _parse_days(value: str | None) -> str | None:
+    """Accept a positive whole number of days (the dashboard's time window), else None."""
+    value = (value or "").strip()
+    return value if value.isdigit() and 0 < int(value) <= 3650 else None
+
+
+def _run_worker_sync(force: bool = False, days: str | None = None) -> dict:
     """Execute pipeline sync inside a thread."""
-    global _last_sync_time, _last_sync_status
+    global _last_sync_time, _last_sync_status, _last_sync_stats
     if not _sync_lock.acquire(blocking=False):
         return {"status": "already_running", "message": "A sync is already in progress."}
 
@@ -72,7 +79,8 @@ def _run_worker_sync(force: bool = False) -> dict:
         
         try:
             from main import run_once
-            run_once(force=force)  # run_once records the quota usage itself
+            stats = run_once(days=days, force=force)  # run_once records the quota usage itself
+            _last_sync_stats = {k: v for k, v in (stats or {}).items() if isinstance(v, int)}
             _last_sync_time = datetime.now(timezone.utc).isoformat()
             _last_sync_status = "success"
             logger.info("Background sync completed successfully.")
@@ -132,6 +140,7 @@ class HealthAndSyncHandler(BaseHTTPRequestHandler):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "last_sync": _last_sync_time,
                 "sync_state": _last_sync_status,
+                "stats": _last_sync_stats,
                 "quota": quota
             })
         elif path == "/api/quota":
@@ -143,8 +152,9 @@ class HealthAndSyncHandler(BaseHTTPRequestHandler):
                 return
             params = parse_qs(parsed.query)
             force = token == "valid" and params.get("force", ["false"])[0].lower() in ("true", "1", "yes")
+            days = _parse_days(params.get("days", [None])[0])
             # Run sync in thread so HTTP request returns quickly
-            thread = threading.Thread(target=_run_worker_sync, args=(force,), daemon=True)
+            thread = threading.Thread(target=_run_worker_sync, args=(force, days), daemon=True)
             thread.start()
             self._send_json(202, {
                 "status": "accepted",
@@ -159,14 +169,19 @@ class HealthAndSyncHandler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
 
         if path == "/api/sync":
-            if SYNC_API_TOKEN and _token_status(self.headers) != "valid":
+            token = _token_status(self.headers)
+            if SYNC_API_TOKEN and token != "valid":
                 self._send_json(401, {"error": "Unauthorized"})
                 return
-            thread = threading.Thread(target=_run_worker_sync, args=(False,), daemon=True)
+            params = parse_qs(parsed.query)
+            force = token == "valid" and params.get("force", ["false"])[0].lower() in ("true", "1", "yes")
+            days = _parse_days(params.get("days", [None])[0])
+            thread = threading.Thread(target=_run_worker_sync, args=(force, days), daemon=True)
             thread.start()
             self._send_json(202, {
                 "status": "accepted",
-                "message": "Sync job initiated in background."
+                "message": "Sync job initiated in background.",
+                "force": force,
             })
         else:
             self._send_json(404, {"error": "Not Found", "path": self.path})

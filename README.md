@@ -360,6 +360,19 @@ AI-Internship-Tracker/
 
 ---
 
+## 📱 Use It on Your Phone
+
+The Android app (`web/android`, Capacitor) is a thin shell around the deployed dashboard at `https://ai-internship-tracker.vercel.app`, so every dashboard change reaches the phone as soon as Vercel redeploys — no reinstall needed.
+
+1. **Get the APK:** GitHub → **Actions** → **Build Android APK** → latest successful run → download the **InternPulse-Debug-APK** artifact (it is rebuilt automatically on every push that changes `web/`).
+2. **Install it:** copy the `.apk` to your phone and open it (allow "Install unknown apps" for your file manager when Android asks).
+3. **Sign in** with your `DASHBOARD_PASSWORD`; the session lasts 90 days.
+4. **Sync from the phone:** *Scan Inbox Now* hands the sync to the Render worker (the phone and Vercel can't run Python). A sleeping free-tier worker takes up to a minute to wake on the first tap.
+
+Background syncing doesn't need the phone at all: the GitHub Actions workflow runs daily, and the Render worker syncs whenever it's awake.
+
+---
+
 ## 🎯 Measuring Classification Accuracy
 
 `eval/evaluate_classifier.py` scores the classifier against emails you label yourself. Email content and labels stay in `eval/data/` (git-ignored).
@@ -386,6 +399,8 @@ The report (`eval/results/report-*.md`) shows relevance precision/recall, status
 | `TELEGRAM_CHAT_ID` | Python + Vercel | The bot only obeys this chat. If it is unset, all commands are refused |
 | `TELEGRAM_WEBHOOK_SECRET` | Python (when registering the webhook) + Vercel | Telegram sends it with every update; the webhook rejects requests without it |
 | `SYNC_API_TOKEN` | Render + Vercel | Required as `Authorization: Bearer …` to trigger `/api/sync` on the Render worker; `?force=true` only works with it |
+| `DASHBOARD_PASSWORD` | Vercel | Puts the dashboard, its API and the Android app behind a password (90-day session cookie). Unset = open to anyone with the URL |
+| `RENDER_WORKER_URL` | Vercel | Render worker the dashboard and Telegram `/scan` hand syncs to (defaults to `https://ai-job-tracker-worker.onrender.com`) |
 
 ---
 

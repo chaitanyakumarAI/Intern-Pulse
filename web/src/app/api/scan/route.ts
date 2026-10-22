@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
+import { workerFetch } from '@/lib/worker';
+
+// Room for a Render free-tier cold start when the scan is delegated to the worker.
+export const maxDuration = 60;
 
 function getProjectRoot(): string {
   if (fs.existsSync(path.join(process.cwd(), 'main.py'))) {
@@ -20,6 +24,74 @@ function getPythonExecutable(projectRoot: string): string {
   const unixVenv = path.join(projectRoot, '.venv', 'bin', 'python');
   if (fs.existsSync(unixVenv)) return unixVenv;
   return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+/** True when the Python pipeline sits next to this app (local dev). On Vercel it doesn't. */
+function hasLocalPipeline(projectRoot: string): boolean {
+  return fs.existsSync(path.join(projectRoot, 'main.py'));
+}
+
+interface WorkerHealth {
+  sync_state?: string;
+  last_sync?: string | null;
+  stats?: Record<string, number> | null;
+  quota?: SyncQuota;
+}
+
+async function workerStatus() {
+  try {
+    const res = await workerFetch('/health', {}, 20_000);
+    const data = (await res.json()) as WorkerHealth;
+    const state = data.sync_state || 'idle';
+    return NextResponse.json({
+      is_running: state === 'running',
+      status: state.startsWith('failed') ? 'error' : state === 'running' ? 'running' : 'idle',
+      error: state.startsWith('failed') ? state : undefined,
+      last_run_time: data.last_sync ?? null,
+      stats: data.stats ?? null,
+      quota: data.quota,
+      engine: 'worker',
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ is_running: false, status: 'error', error: `Sync worker unreachable: ${message}`, engine: 'worker' });
+  }
+}
+
+async function workerScan(daysParam: string | undefined, force: boolean) {
+  try {
+    const quotaRes = await workerFetch('/api/quota');
+    const quota = (await quotaRes.json()) as SyncQuota;
+    if (quota.remaining <= 0 && !force) {
+      return NextResponse.json(
+        { ok: false, error: 'DAILY_LIMIT_REACHED', message: `Daily Gmail sync limit reached (${quota.syncs_today}/${quota.daily_limit}). Resets at ${quota.resets_at}.`, quota },
+        { status: 429 }
+      );
+    }
+    const query = new URLSearchParams();
+    if (daysParam) query.set('days', daysParam);
+    if (force) query.set('force', 'true');
+    const res = await workerFetch(`/api/sync${query.size ? `?${query}` : ''}`, { method: 'POST' });
+    if (res.status === 401) {
+      return NextResponse.json(
+        { ok: false, message: 'The sync worker rejected the request. Set the same SYNC_API_TOKEN on Vercel and Render.' },
+        { status: 502 }
+      );
+    }
+    if (!res.ok) {
+      return NextResponse.json({ ok: false, message: `Sync worker returned ${res.status}.` }, { status: 502 });
+    }
+    return NextResponse.json({
+      ok: true,
+      message: daysParam ? `Inbox scan (last ${daysParam} days) started.` : 'Inbox scan started.',
+      status: { is_running: true, status: 'running' },
+      quota,
+      engine: 'worker',
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ ok: false, message: `Could not reach the sync worker: ${message}` }, { status: 502 });
+  }
 }
 
 function getStatusFilePath(projectRoot: string): string {
@@ -98,6 +170,7 @@ function getDailySyncQuota(projectRoot: string): SyncQuota {
 
 export async function GET() {
   const projectRoot = getProjectRoot();
+  if (!hasLocalPipeline(projectRoot)) return workerStatus();
   const statusFile = getStatusFilePath(projectRoot);
   const quota = getDailySyncQuota(projectRoot);
 
@@ -128,10 +201,6 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const projectRoot = getProjectRoot();
-  const statusFile = getStatusFilePath(projectRoot);
-  const pythonPath = getPythonExecutable(projectRoot);
-  const quota = getDailySyncQuota(projectRoot);
-
   let daysParam: string | undefined;
   let force = false;
   try {
@@ -154,6 +223,12 @@ export async function POST(req: Request) {
       force = true;
     }
   } catch {}
+
+  if (!hasLocalPipeline(projectRoot)) return workerScan(daysParam, force);
+
+  const statusFile = getStatusFilePath(projectRoot);
+  const pythonPath = getPythonExecutable(projectRoot);
+  const quota = getDailySyncQuota(projectRoot);
 
   // 1. Enforce Daily Sync Quota Limit
   if (quota.remaining <= 0 && !force) {
