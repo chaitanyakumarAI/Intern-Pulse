@@ -87,47 +87,50 @@ def get_gmail_service():
 # ── Message fetching ──────────────────────────────────────────────────────────
 
 @retry(max_attempts=3, delay=2.0)
-def fetch_messages(service, max_results: int = None, query: str = None) -> list[dict]:
-    """
-    Fetch the latest `max_results` emails from Gmail matching `query`.
-    Returns a list of parsed email dicts.
-    """
+def list_message_ids(service, max_results: int = None, query: str = None) -> list[str]:
+    """Return the IDs of the newest matching messages, following pagination up to max_results."""
     if max_results is None:
         max_results = config.GMAIL_MAX_RESULTS
     if query is None:
         query = getattr(config, "GMAIL_QUERY", "")
 
     query_preview = query[:60] + "..." if query and len(query) > 60 else (query or "INBOX only")
-    logger.info("Fetching up to %d messages from Gmail (filter: %s)…", max_results, query_preview)
+    logger.info("Listing up to %d messages from Gmail (filter: %s)…", max_results, query_preview)
 
-    list_kwargs = {"userId": "me", "maxResults": max_results}
-    if query:
-        list_kwargs["q"] = query
-    else:
-        list_kwargs["labelIds"] = ["INBOX"]
+    ids: list[str] = []
+    page_token = None
+    while len(ids) < max_results:
+        kwargs = {"userId": "me", "maxResults": min(max_results - len(ids), 500)}
+        if query:
+            kwargs["q"] = query
+        else:
+            kwargs["labelIds"] = ["INBOX"]
+        if page_token:
+            kwargs["pageToken"] = page_token
+        try:
+            result = service.users().messages().list(**kwargs).execute()
+        except HttpError as exc:
+            logger.error("Gmail API list error: %s", exc)
+            raise
+        ids.extend(ref["id"] for ref in result.get("messages", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+    return ids
 
-    try:
-        result = (
-            service.users()
-            .messages()
-            .list(**list_kwargs)
-            .execute()
-        )
-    except HttpError as exc:
-        logger.error("Gmail API list error: %s", exc)
-        raise
 
-    message_refs = result.get("messages", [])
-    if not message_refs:
-        logger.info("No messages found matching search criteria.")
-        return []
+def fetch_message(service, msg_id: str) -> Optional[dict]:
+    """Fetch and parse one message. Returns None if it can't be read."""
+    return _parse_message(service, msg_id)
 
+
+def fetch_messages(service, max_results: int = None, query: str = None) -> list[dict]:
+    """Fetch the newest matching emails as parsed dicts."""
     emails = []
-    for ref in message_refs:
-        parsed = _parse_message(service, ref["id"])
+    for msg_id in list_message_ids(service, max_results=max_results, query=query):
+        parsed = _parse_message(service, msg_id)
         if parsed:
             emails.append(parsed)
-
     logger.info("Fetched and parsed %d messages.", len(emails))
     return emails
 

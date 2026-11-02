@@ -28,8 +28,16 @@ def pipeline(monkeypatch):
     """Wire run_once to fakes. Returns a dict for scripting inputs and inspecting alerts."""
     state = {"emails": [], "by_subject": {}, "alerts": [],
              "research": {"scam_risk": "Low", "risk_notes": "Established company.", "prep_sheet": ""}}
+    state["fetched_ids"] = []
+
+    def fetch_message(service, msg_id):
+        state["fetched_ids"].append(msg_id)
+        return next(e for e in state["emails"] if e["id"] == msg_id)
+
     monkeypatch.setattr(gmail_reader, "get_gmail_service", lambda: object())
-    monkeypatch.setattr(gmail_reader, "fetch_messages", lambda service, max_results=None: list(state["emails"]))
+    monkeypatch.setattr(gmail_reader, "list_message_ids",
+                        lambda service, max_results=None, query=None: [e["id"] for e in state["emails"]])
+    monkeypatch.setattr(gmail_reader, "fetch_message", fetch_message)
     monkeypatch.setattr(status_classifier, "classify_email_ai", lambda email: dict(state["by_subject"][email["subject"]]))
     monkeypatch.setattr(company_researcher, "analyze_company", lambda company, role, status: dict(state["research"]))
     monkeypatch.setattr(telegram_notifier, "notify_status_change",
@@ -105,3 +113,34 @@ def test_failed_gmail_auth_does_not_use_quota(pipeline, monkeypatch):
     monkeypatch.setattr(gmail_reader, "get_gmail_service", broken_auth)
     main.run_once()
     assert sync_quota.get_quota()["syncs_today"] == 0
+
+
+def test_handled_emails_are_not_downloaded_again(pipeline):
+    pipeline["emails"] = [make_email("1", "Thank you for your application", "2026-10-01T09:00:00.000Z")]
+    pipeline["by_subject"] = {"Thank you for your application": classification("Applied")}
+    main.run_once(force=True)
+    pipeline["fetched_ids"].clear()
+    stats = main.run_once(force=True)
+    assert pipeline["fetched_ids"] == []  # filtered by ID before any per-message API call
+    assert (stats["fetched"], stats["new"]) == (1, 0)
+
+
+def test_dry_run_writes_and_sends_nothing(pipeline):
+    pipeline["emails"] = [make_email("1", "Thank you for your application", "2026-10-01T09:00:00.000Z")]
+    pipeline["by_subject"] = {"Thank you for your application": classification("Applied")}
+    stats = main.run_once(dry_run=True)
+    assert stats["processed"] == 1
+    assert db.get_all_applications() == []
+    assert email_history.get_processed_ids() == set()
+    assert pipeline["alerts"] == []
+    assert sync_quota.get_quota()["syncs_today"] == 0
+
+
+def test_job_digest_alerts_once_and_is_not_stored_as_application(pipeline):
+    digest = classification("Job Opportunity", company="Globex", method="gemini")
+    pipeline["emails"] = [make_email("1", "Jobs you might like", "2026-10-01T09:00:00.000Z"),
+                          make_email("2", "More jobs you might like", "2026-10-02T09:00:00.000Z")]
+    pipeline["by_subject"] = {"Jobs you might like": digest, "More jobs you might like": digest}
+    main.run_once(force=True)
+    assert pipeline["alerts"] == [("opportunity", "Job Opportunity")]
+    assert db.get_all_applications() == []

@@ -1,8 +1,8 @@
 """
 email_history.py — Persistent tracking of already-processed Gmail message IDs.
 
-Stores processed IDs in data/processed_emails.json so that re-runs never
-re-process emails that have already been classified and inserted into Notion.
+Uses the Supabase processed_emails table when available (see cloud_state.py) and
+data/processed_emails.json otherwise, so re-runs never re-process handled emails.
 
 Format of processed_emails.json:
 {
@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 from typing import Set
 
+import cloud_state
 import config
 from utils import now_iso
 
@@ -58,9 +59,19 @@ def get_processed_ids() -> Set[str]:
     return set(data["processed_ids"])
 
 
+def filter_unprocessed(gmail_ids: list[str]) -> list[str]:
+    """Return the IDs that haven't been handled yet, preserving order."""
+    if cloud_state.available():
+        return cloud_state.unprocessed(gmail_ids)
+    seen = get_processed_ids()
+    return [g for g in gmail_ids if g not in seen]
+
+
 def mark_processed(gmail_ids: list[str]) -> None:
     """Add one or more Gmail message IDs to the processed set."""
     if not gmail_ids:
+        return
+    if cloud_state.available() and cloud_state.mark_processed(gmail_ids):
         return
     data = _load()
     existing = set(data["processed_ids"])

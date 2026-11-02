@@ -1,14 +1,15 @@
 """
 sync_quota.py — Enforces and tracks daily Gmail sync limits for InternPulse.
 
-Persists quota state to data/sync_quota.json and automatically resets
-when the calendar day rolls over (UTC).
+Counts today's rows in the Supabase sync_runs table when available (see
+cloud_state.py); otherwise persists to data/sync_quota.json. Resets at 00:00 UTC.
 """
 import os
 import json
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
+import cloud_state
 import config
 
 logger = logging.getLogger("sync_quota")
@@ -23,7 +24,7 @@ def _get_today_str() -> str:
 
 def get_daily_limit() -> int:
     """Read configured daily sync limit from config or env."""
-    return getattr(config, "DAILY_SYNC_LIMIT", 5)
+    return getattr(config, "DAILY_SYNC_LIMIT", 12)
 
 
 def get_quota(daily_limit: int | None = None) -> dict:
@@ -32,6 +33,17 @@ def get_quota(daily_limit: int | None = None) -> dict:
     """
     limit = daily_limit if daily_limit is not None else get_daily_limit()
     today = _get_today_str()
+
+    if cloud_state.available():
+        used = cloud_state.runs_today()
+        return {
+            "date": today,
+            "syncs_today": used,
+            "daily_limit": limit,
+            "remaining": max(0, limit - used),
+            "last_sync_time": cloud_state.last_run_time(),
+            "resets_at": "00:00 UTC",
+        }
 
     default_quota = {
         "date": today,
@@ -86,9 +98,11 @@ def can_sync(daily_limit: int | None = None) -> tuple[bool, dict]:
 def record_sync(daily_limit: int | None = None) -> dict:
     """
     Increment today's sync count and update timestamp.
-    Returns updated quota dict.
+    Returns updated quota dict. With cloud state the run's own row is the record.
     """
     quota = get_quota(daily_limit)
+    if cloud_state.available():
+        return quota
     quota["syncs_today"] = int(quota.get("syncs_today", 0)) + 1
     quota["remaining"] = max(0, quota["daily_limit"] - quota["syncs_today"])
     quota["last_sync_time"] = datetime.now(timezone.utc).isoformat()

@@ -6,6 +6,7 @@ import logging
 import json
 from typing import Dict, Optional
 from duckduckgo_search import DDGS
+import cloud_state
 import config
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,19 @@ def _heuristic_scam_check(company_name: str, scam_results: str) -> Dict[str, str
 
 COMPANY_CACHE_FILE = config.DATA_DIR / "company_cache.json"
 
+def _cache_get(key: str) -> Optional[Dict[str, str]]:
+    if cloud_state.available():
+        return cloud_state.company_get(key)
+    return _load_cache().get(key)
+
+def _cache_set(key: str, value: Dict[str, str]) -> None:
+    if cloud_state.available():
+        cloud_state.company_set(key, value)
+        return
+    cache = _load_cache()
+    cache[key] = value
+    _save_cache(cache)
+
 def _load_cache() -> dict:
     if COMPANY_CACHE_FILE.exists():
         try:
@@ -88,7 +102,7 @@ def analyze_company(company_name: str, role: str, status: str) -> Dict[str, str]
     Research a company.
     If it's any new application, check for scam/legitimacy risk.
     If it's an Interview, also generate an interview cheat sheet.
-    Results are cached on disk in data/company_cache.json to save API quota.
+    Results are cached (Supabase, or data/company_cache.json) to save API quota.
     """
     if company_name == "Unknown" or company_name.lower() in ("linkedin", "internshala", "unstop"):
         return {"scam_risk": "Unknown", "risk_notes": "", "prep_sheet": ""}
@@ -104,8 +118,7 @@ def analyze_company(company_name: str, role: str, status: str) -> Dict[str, str]
         }
         
     comp_key = company_name.lower().strip()
-    cache = _load_cache()
-    cached_entry = cache.get(comp_key)
+    cached_entry = _cache_get(comp_key)
     
     # If already cached and we don't need a new interview prep sheet, reuse!
     if cached_entry:
@@ -185,8 +198,7 @@ Return ONLY valid JSON with this schema:
             "risk_notes": data.get("risk_notes", ""),
             "prep_sheet": data.get("prep_sheet", "")
         }
-        cache[comp_key] = final_res
-        _save_cache(cache)
+        _cache_set(comp_key, final_res)
         return final_res
     except Exception as e:
         logger.error("Failed to generate company analysis with Gemini: %s. Using heuristic fallback.", e)

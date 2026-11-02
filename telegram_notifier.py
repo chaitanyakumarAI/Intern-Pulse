@@ -1,6 +1,7 @@
 """
 telegram_notifier.py — Send job application status alerts via Telegram Bot API.
 """
+import html
 import logging
 import requests
 
@@ -76,9 +77,11 @@ def notify_status_change(
         return False
 
     emoji   = _STATUS_EMOJI.get(status, "📌")
-    company = classification.get("company", "Unknown")
-    role    = classification.get("role", "Unknown")
-    subject = truncate(email.get("subject", ""), 80)
+    # Everything from an email or a web page is escaped: Telegram rejects the whole
+    # message on a stray "&" or "<" (e.g. a company called "AT&T").
+    company = html.escape(classification.get("company", "Unknown"))
+    role    = html.escape(classification.get("role", "Unknown"))
+    subject = html.escape(truncate(email.get("subject", ""), 80))
     # Parse date to show time too (e.g. 2026-05-13 14:30 UTC)
     date_raw = email.get("date_raw", "")
     date_iso = email.get("date_iso", "")[:16].replace("T", " ") + " UTC"
@@ -95,19 +98,19 @@ def notify_status_change(
     link_line = ""
     if link_url:
         label = "Job Link" if status == "Job Opportunity" else "Action Link"
-        link_line = f"\n🔗 <b>{label}:</b> {link_url}"
+        link_line = f"\n🔗 <b>{label}:</b> {html.escape(link_url)}"
 
-    notes = classification.get("notes", "")
+    notes = html.escape(classification.get("notes", ""))
     notes_line = f"\n📌 <i>{notes}</i>" if notes and notes != "(keyword fallback)" else ""
 
     scam_risk = classification.get("scam_risk", "Unknown")
     scam_emoji = "⚠️" if scam_risk in ("High", "Medium") else "✅"
-    risk_notes = classification.get("risk_notes", "")
+    risk_notes = html.escape(classification.get("risk_notes", ""))
     scam_line = ""
     if scam_risk != "Unknown":
         scam_line = f"\n\n{scam_emoji} <b>Risk Assessment:</b> {scam_risk}\n<i>{risk_notes}</i>"
 
-    prep_sheet = classification.get("prep_sheet", "")
+    prep_sheet = html.escape(classification.get("prep_sheet", ""))
     prep_line = ""
     if prep_sheet:
         prep_line = f"\n\n🧠 <b>Interview Prep Sheet:</b>\n{prep_sheet}"
@@ -132,9 +135,12 @@ def notify_summary(stats: dict) -> bool:
     """
     Send a run summary message.
     stats: {processed, created, updated, skipped, errors}
+    Stays silent when nothing changed, so scheduled runs don't become noise.
     """
+    if not (stats.get("created") or stats.get("updated") or stats.get("errors")):
+        return False
     msg = (
-        f"📊 <b>AI Job Tracker — Run Summary</b>\n"
+        f"📊 <b>InternPulse — Sync Summary</b>\n"
         f"\n✅ Processed: {stats.get('processed', 0)} emails"
         f"\n🆕 Created:   {stats.get('created', 0)} new rows"
         f"\n🔄 Updated:   {stats.get('updated', 0)} rows"

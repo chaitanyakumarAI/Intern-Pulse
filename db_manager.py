@@ -5,13 +5,13 @@ Fallback Engine: Local SQLite (data/jobs.db) if Supabase credentials are not yet
 
 Features:
   - Zero-latency application querying and upserting.
-  - Native canonical slug matching to prevent duplicates forever.
-  - Status progression hierarchy protection (never downgrades progress).
-  - Built-in migration and backup loaders.
+  - Canonical company slug matching to prevent duplicates.
+  - Status resolution: progress never regresses, final outcomes always land.
 """
 import os
 import re
 import json
+from urllib.parse import quote
 import sqlite3
 import logging
 from typing import List, Dict, Any, Optional
@@ -45,6 +45,9 @@ STATUS_HIERARCHY = {
     "Ghosted": 1,
     "Unknown": 0
 }
+
+# Added by a later schema version; writes still succeed if the upgrade hasn't been run.
+OPTIONAL_COLUMNS = ("interview_date", "last_subject", "last_gmail_id")
 
 # Terminal outcomes override any in-progress stage. Offer beats Rejected because
 # one row tracks a whole company and a lost offer is the costlier mistake.
@@ -168,7 +171,7 @@ def _sync_json_backup():
             json.dump(apps, f, indent=2)
 
         web_data = config.ROOT_DIR / "web" / "data" / "canonical_applications.json"
-        web_data.parent.mkdir(exist_ok=True)
+        web_data.parent.mkdir(parents=True, exist_ok=True)
         with open(web_data, "w", encoding="utf-8") as f:
             json.dump(apps, f, indent=2)
     except Exception as e:
@@ -185,6 +188,36 @@ def _supabase_headers(cfg: Dict[str, str]) -> Dict[str, str]:
         "Content-Type": "application/json",
         "Prefer": "return=representation"
     }
+
+
+def quote_value(value: str) -> str:
+    """URL-encode a value for a PostgREST filter."""
+    return quote(value, safe="")
+
+
+def rest(method: str, path: str, json: Any = None, prefer: Optional[str] = None) -> Optional[requests.Response]:
+    """Call a Supabase table endpoint. Returns None if Supabase is unconfigured or unreachable."""
+    sb = _get_supabase_config()
+    if not sb:
+        return None
+    headers = _supabase_headers(sb)
+    if prefer:
+        headers["Prefer"] = prefer
+    try:
+        return _session.request(method, f"{sb['url']}/rest/v1/{path}", headers=headers, json=json, timeout=10)
+    except requests.RequestException as e:
+        logger.warning("Supabase request failed: %s", e)
+        return None
+
+
+def _write_row(send, sb: Dict[str, str], endpoint: str, payload: dict) -> requests.Response:
+    """POST/PATCH a row, retrying without newer columns if the schema hasn't been upgraded yet."""
+    resp = send(endpoint, headers=_supabase_headers(sb), json=payload, timeout=10)
+    if resp.status_code == 400 and "PGRST204" in resp.text:
+        logger.warning("Database schema is out of date; run supabase_schema.sql to store interview dates and email links.")
+        trimmed = {k: v for k, v in payload.items() if k not in OPTIONAL_COLUMNS}
+        resp = send(endpoint, headers=_supabase_headers(sb), json=trimmed, timeout=10)
+    return resp
 
 
 # ── Core Operations ──────────────────────────────────────────────────────────
@@ -256,6 +289,12 @@ def upsert_application(email: dict, classification: dict, _retry_on_conflict: bo
     risk_notes = classification.get("risk_notes", "")
     prep_sheet = classification.get("prep_sheet", "")
     notes = classification.get("notes", "")
+    latest_email = {
+        "last_subject": (email.get("subject") or "")[:300] or None,
+        "last_gmail_id": email.get("id") or None,
+    }
+    if classification.get("interview_date"):
+        latest_email["interview_date"] = classification["interview_date"]
 
     if status == "Unknown":
         return {"action": "skipped", "id": None, "status_changed": False}
@@ -282,6 +321,7 @@ def upsert_application(email: dict, classification: dict, _retry_on_conflict: bo
             "role": effective_role,
             "last_checked": now_str,
             "updated_at": now_str,
+            **latest_email,
         }
         if oa_link: update_payload["application_link"] = oa_link
         if scam_risk and scam_risk != "Unknown": update_payload["scam_risk"] = scam_risk
@@ -295,7 +335,7 @@ def upsert_application(email: dict, classification: dict, _retry_on_conflict: bo
         if sb:
             try:
                 endpoint = f"{sb['url']}/rest/v1/applications?id=eq.{row_id}"
-                resp = _session.patch(endpoint, headers=_supabase_headers(sb), json=update_payload, timeout=10)
+                resp = _write_row(_session.patch, sb, endpoint, update_payload)
                 if resp.status_code in (200, 204):
                     logger.info("Supabase updated row %s (%s): %s -> %s", row_id[:8], company, old_status, effective_status)
                     return {"action": "updated", "id": row_id, "status_changed": status_changed}
@@ -336,17 +376,17 @@ def upsert_application(email: dict, classification: dict, _retry_on_conflict: bo
             "prep_sheet": prep_sheet,
             "notes": notes,
             "created_at": now_str,
-            "updated_at": now_str
+            "updated_at": now_str,
+            **latest_email,
         }
 
         sb = _get_supabase_config()
         if sb:
             try:
                 endpoint = f"{sb['url']}/rest/v1/applications"
-                resp = _session.post(endpoint, headers=_supabase_headers(sb), json=new_payload, timeout=10)
+                resp = _write_row(_session.post, sb, endpoint, new_payload)
                 if resp.status_code in (200, 201):
                     logger.info("Supabase created application %s: %s @ %s [%s]", row_id[:8], role, company, status)
-                    _sync_json_backup()
                     return {"action": "created", "id": row_id, "status_changed": True}
                 if resp.status_code == 409 and _retry_on_conflict:
                     # Another run inserted this company between our lookup and insert
@@ -370,89 +410,3 @@ def upsert_application(email: dict, classification: dict, _retry_on_conflict: bo
         _sync_json_backup()
         logger.info("SQLite created application %s: %s @ %s [%s]", row_id[:8], role, company, status)
         return {"action": "created", "id": row_id, "status_changed": True}
-
-
-def update_application_status(app_id: str, new_status: str) -> bool:
-    """Update status of a specific application by id."""
-    now_str = now_iso()
-    sb = _get_supabase_config()
-    if sb:
-        try:
-            endpoint = f"{sb['url']}/rest/v1/applications?id=eq.{app_id}"
-            resp = _session.patch(
-                endpoint,
-                headers=_supabase_headers(sb),
-                json={"status": new_status, "last_checked": now_str, "updated_at": now_str},
-                timeout=10
-            )
-            if resp.status_code in (200, 204):
-                logger.info("Supabase status updated for row %s -> %s", app_id[:8], new_status)
-                _sync_json_backup()
-                return True
-        except Exception as e:
-            logger.warning("Supabase status update failed: %s", e)
-
-    try:
-        conn = sqlite3.connect(SQLITE_PATH)
-        cur = conn.cursor()
-        cur.execute("UPDATE applications SET status = ?, last_checked = ?, updated_at = ? WHERE id = ?", (new_status, now_str, now_str, app_id))
-        conn.commit()
-        updated = cur.rowcount > 0
-        conn.close()
-        if updated:
-            _sync_json_backup()
-        return updated
-    except Exception as e:
-        logger.error("SQLite status update failed: %s", e)
-        return False
-
-
-def search_applications(query: str) -> Optional[Dict[str, Any]]:
-    """Search for an application by exact slug or company substring."""
-    if not query:
-        return None
-    slug = normalize_slug(query)
-    match = find_application_by_slug(slug)
-    if match:
-        return match
-
-    all_apps = get_all_applications()
-    q_lower = query.strip().lower()
-    for app in all_apps:
-        co = app.get("company", "").lower()
-        if q_lower in co or co in q_lower:
-            return app
-    return None
-
-
-def get_pipeline_stats() -> Dict[str, Any]:
-    """Calculate aggregated telemetry across all applications."""
-    apps = get_all_applications()
-    counts: Dict[str, int] = {}
-    high_scam_count = 0
-    recent_7d = 0
-    now = datetime.now(timezone.utc)
-
-    for a in apps:
-        st = a.get("status", "Unknown")
-        counts[st] = counts.get(st, 0) + 1
-        if a.get("scam_risk") == "High":
-            high_scam_count += 1
-        
-        # Check recent
-        d_str = a.get("applied_date") or a.get("last_checked")
-        if d_str:
-            try:
-                clean_d = d_str.replace("Z", "+00:00")
-                d_obj = datetime.fromisoformat(clean_d)
-                if (now - d_obj).days <= 7:
-                    recent_7d += 1
-            except Exception:
-                pass
-
-    return {
-        "total": len(apps),
-        "status_counts": counts,
-        "high_scam_count": high_scam_count,
-        "recent_7d": recent_7d
-    }

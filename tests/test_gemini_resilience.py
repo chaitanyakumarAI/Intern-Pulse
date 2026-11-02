@@ -29,6 +29,7 @@ class FakeClient:
 
     def _generate(self, **kwargs):
         self.calls += 1
+        self.models_used = getattr(self, "models_used", []) + [kwargs.get("model")]
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -125,3 +126,10 @@ def test_error_classification(exc, kind):
 
 def test_unconfigured_gemini_uses_keyword_tier(job_email):
     assert sc.classify_email_ai(job_email)["method"] == "keyword"
+
+
+def test_overloaded_model_falls_back_to_lighter_model(gemini, job_email, monkeypatch):
+    monkeypatch.setattr(sc, "GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
+    (client,) = gemini([server_error(), GOOD_REPLY])
+    assert sc.classify_email_ai(job_email)["method"] == "gemini"
+    assert client.models_used == [sc.GEMINI_MODEL, "gemini-flash-lite-latest"]

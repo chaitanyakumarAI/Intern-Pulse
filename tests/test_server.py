@@ -15,7 +15,8 @@ import server
 def worker(monkeypatch):
     """Serve HealthAndSyncHandler on localhost; record sync calls instead of running the pipeline."""
     calls = []
-    monkeypatch.setattr(server, "_run_worker_sync", lambda force=False, days=None: calls.append((force, days)))
+    monkeypatch.setattr(server, "_run_worker_sync",
+                        lambda force=False, days=None, trigger="manual": calls.append((force, days)))
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.HealthAndSyncHandler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
@@ -75,7 +76,7 @@ def test_parse_days(raw, parsed):
 
 
 def test_health_reports_last_run_stats(monkeypatch):
-    monkeypatch.setattr(main, "run_once", lambda days=None, force=False: {"processed": 4, "created": 1, "status": "x"})
+    monkeypatch.setattr(main, "run_once", lambda days=None, force=False, trigger="manual": {"processed": 4, "created": 1})
     result = server._run_worker_sync()
     assert result["status"] == "success"
     assert server._last_sync_stats == {"processed": 4, "created": 1}

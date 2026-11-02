@@ -1,56 +1,50 @@
-name: AI Internship Tracker
+name: Scheduled Gmail Sync
 
+# The pipeline itself runs on the Render worker, where all its secrets live.
+# This job only wakes the worker every 3 hours, asks it to sync, and waits for the
+# result so failures show up here.
 on:
   schedule:
-    # Runs once daily at 08:00 UTC (or trigger on-demand via workflow_dispatch)
-    - cron: "0 8 * * *"
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+    - cron: "15 */3 * * *"
+  workflow_dispatch:
 
-# Never run two syncs at once (they would race on the same records)
 concurrency:
   group: internpulse-sync
   cancel-in-progress: false
 
 jobs:
-  run-tracker:
+  sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 25
+    env:
+      WORKER_URL: ${{ vars.RENDER_WORKER_URL || 'https://ai-job-tracker-worker.onrender.com' }}
+      SYNC_API_TOKEN: ${{ secrets.SYNC_API_TOKEN }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Wake the worker
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 30 "$WORKER_URL/health" > /dev/null; then echo "Worker is up"; exit 0; fi
+            echo "Waiting for the worker to wake ($i/12)..."; sleep 10
+          done
+          echo "::error::Worker did not respond"; exit 1
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
+      - name: Start a sync
+        run: |
+          auth=()
+          if [ -n "$SYNC_API_TOKEN" ]; then auth=(-H "Authorization: Bearer $SYNC_API_TOKEN"); fi
+          curl -fsS --max-time 30 -X POST "${auth[@]}" "$WORKER_URL/api/sync?trigger=schedule&days=7"
 
-      - name: Install Dependencies
-        run: pip install -r requirements-dev.txt
-
-      # Offline tests only: no Gmail, Gemini, Supabase or Telegram calls
-      - name: Run Offline Tests
-        run: pytest
-
-      # Runners start empty; keep the processed-email set and company research
-      # cache between runs so emails and job alerts aren't handled twice.
-      - name: Restore Pipeline State
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/processed_emails.json
-            data/company_cache.json
-          key: internpulse-state-${{ github.run_id }}
-          restore-keys: internpulse-state-
-
-      - name: Run Tracker
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GMAIL_CREDENTIALS_JSON: ${{ secrets.GMAIL_CREDENTIALS_JSON }}
-          GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
-        run: python main.py
+      - name: Wait for the result
+        run: |
+          sleep 5
+          for i in $(seq 1 90); do
+            health=$(curl -fsS --max-time 30 "$WORKER_URL/health" || echo '{}')
+            state=$(echo "$health" | jq -r '.sync_state // "unknown"')
+            if [ "$state" != "running" ]; then
+              echo "$health" | jq '{sync_state, stats, quota, configured}'
+              case "$state" in failed*) echo "::error::$state"; exit 1;; esac
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::Sync still running after 15 minutes"

@@ -1,5 +1,5 @@
 """
-test_setup.py — Quick smoke-test to verify the environment is wired up correctly.
+doctor.py — Read-only check that your environment is wired up correctly.
 
 Run:  .venv\\Scripts\\python.exe test_setup.py
 
@@ -9,7 +9,7 @@ Checks:
   3. .env loaded with expected keys present
   4. credentials.json exists
   5. Keyword classifier works offline
-  6. (Optional) Notion connectivity
+  6. Database (Supabase or SQLite) and cloud state tables
   7. (Optional) Telegram connectivity
 """
 import sys
@@ -54,7 +54,7 @@ try:
 
     checks = {
         "SUPABASE_URL":      config.SUPABASE_URL,
-        "OPENAI_API_KEY":    config.OPENAI_API_KEY,
+        "GEMINI_API_KEY":    config.GEMINI_API_KEY,
         "TELEGRAM_BOT_TOKEN": config.TELEGRAM_BOT_TOKEN,
         "TELEGRAM_CHAT_ID":  config.TELEGRAM_CHAT_ID,
     }
@@ -99,6 +99,11 @@ try:
     sb = db_manager._get_supabase_config()
     if sb:
         print(f"  ✓  Supabase connected! Found {len(apps)} applications.")
+        import cloud_state
+        if cloud_state.available():
+            print("  ✓  Cloud state tables found (sync history, processed emails, opportunities).")
+        else:
+            print("  ⚠  Cloud state tables missing: run supabase_schema.sql in the Supabase SQL editor.")
     else:
         print(f"  ✓  SQLite fallback active (data/jobs.db). Found {len(apps)} applications.")
 except Exception as e:

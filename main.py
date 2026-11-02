@@ -1,50 +1,47 @@
 """
-main.py — Entry point and pipeline orchestrator for AI Job Tracker.
+main.py — Pipeline orchestrator for InternPulse.
 
-Pipeline:
-  1. Check daily sync quota (enforces DAILY_SYNC_LIMIT)
-  2. Authenticate Gmail
-  3. Fetch latest emails (skip already-processed ones)
-  4. For each new email (oldest first, so later emails win):
-     a. Job-email pre-filter
-     b. Classify (Gemini -> keyword fallback), then validate / fill gaps
-     c. Research the company (scam risk, interview prep)
-     d. Upsert into the database (Supabase, SQLite fallback)
-     e. Send Telegram alert if the status changed
-  5. Mark emails as processed (persist to data/processed_emails.json)
-  6. Print / log summary stats
+One sync:
+  1. Check the daily sync limit and that no other sync is running
+  2. List matching Gmail message IDs, and skip the ones already handled
+  3. For each new email, oldest first so the latest email decides the status:
+     a. Relevance filter
+     b. Classify (Gemini, then keyword fallback), validate, fill gaps
+     c. Job digests: save the opportunity and alert once
+     d. Applications: research the company, upsert, alert if the status changed
+  4. Record the run
 
 Usage:
-    python main.py                   # run once (respects daily limit)
-    python main.py --days 7          # scan emails from last 7 days
-    python main.py --force           # bypass daily sync limit
+    python main.py                 # one sync (respects the daily limit)
+    python main.py --days 7        # only emails from the last 7 days
+    python main.py --force         # bypass the daily limit
+    python main.py --dry-run --limit 5   # classify only: no writes, no alerts
 """
-import sys
+import argparse
 import json
-import logging
-from pathlib import Path
+import sys
+import time
+from collections import Counter
+from datetime import datetime, timezone
 
 # Fix Windows console encoding so Unicode characters print correctly
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+import cloud_state
+import company_researcher
 import config
+import db_manager
+import email_history
+import gmail_reader
+import status_classifier
+import telegram_notifier
 from config import setup_logging, print_startup_diagnostics
 from sync_quota import can_sync, record_sync, get_quota
+from utils import is_job_related, make_email_id
 
-# Initialise logging first so all imports use correct level
 logger = setup_logging("main")
 PIPELINE_STATUS_FILE = config.DATA_DIR / "pipeline_status.json"
-
-def _update_pipeline_status(data: dict) -> None:
-    """Save pipeline execution status for Next.js web app / API polling."""
-    try:
-        PIPELINE_STATUS_FILE.parent.mkdir(exist_ok=True)
-        with open(PIPELINE_STATUS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        logger.warning("Failed to write pipeline status file: %s", e)
-
 
 _RISK_RANK = {"High": 3, "Medium": 2, "Low": 1}
 
@@ -53,319 +50,211 @@ def _risk_rank(risk: str | None) -> int:
     return _RISK_RANK.get(risk or "", 0)
 
 
-def run_once(days: str | None = None, force: bool = False) -> dict:
-    """
-    Execute one full scan-classify-upsert cycle.
-    Returns a stats dict: {fetched, new, processed, created, updated, skipped, errors}
-    """
-    import os
-    import time
-    from datetime import datetime, timezone
-    from gmail_reader import get_gmail_service, fetch_messages
-    from status_classifier import (classify_email_ai, reset_gemini_session, is_gemini_configured,
-                                   _extract_company, _extract_role)
-    from db_manager import upsert_application
-    from telegram_notifier import notify_status_change, notify_summary
-    from utils import is_job_related
-    from email_history import get_processed_ids, mark_processed
-
-    # Check daily sync quota
-    allowed, quota = can_sync()
-    if not allowed and not force:
-        logger.warning(
-            "Daily Gmail sync limit reached (%d/%d used today). Resets at %s. Use --force to override.",
-            quota["syncs_today"], quota["daily_limit"], quota.get("resets_at", "00:00 UTC")
-        )
-        _update_pipeline_status({
-            "is_running": False,
-            "status": "limit_reached",
-            "last_run_time": datetime.now(timezone.utc).isoformat(),
-            "error": f"Daily sync limit reached ({quota['syncs_today']}/{quota['daily_limit']}). Resets at {quota.get('resets_at', '00:00 UTC')}.",
-            "quota": quota,
-        })
-        return {"status": "limit_reached", "quota": quota}
-
-    # Apply days filter if provided via parameter or environment
-    effective_days = days or os.environ.get("GMAIL_DAYS", "").strip()
-    if effective_days and effective_days.lower() != "all":
-        config.GMAIL_QUERY = f"{config._base_query} newer_than:{effective_days}d"
-        logger.info("Applying time horizon query: newer_than:%sd", effective_days)
-
-    stats = {
-        "fetched": 0, "new": 0, "processed": 0,
-        "created": 0, "updated": 0, "skipped": 0, "errors": 0,
-    }
-
-    start_ts = time.time()
-    reset_gemini_session()
-
-    _update_pipeline_status({
-        "is_running": True,
-        "status": "running",
-        "start_time": datetime.now(timezone.utc).isoformat(),
-        "days_filter": effective_days or "ALL",
-        "quota": quota,
-        "stats": stats,
-    })
-
-    # â”€â”€ Startup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    print_startup_diagnostics()
-    logger.info("=" * 60)
-    logger.info("AI Job Tracker â€” starting pipeline run")
-    logger.info("=" * 60)
-
-    # â”€â”€ Step 1: Gmail authentication â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def _update_pipeline_status(data: dict) -> None:
+    """Save run status for the local dashboard's polling."""
     try:
-        service = get_gmail_service()
-    except Exception as exc:
-        logger.error("Gmail authentication failed: %s", exc)
-        logger.error("Ensure credentials.json is present and valid.")
-        _update_pipeline_status({
-            "is_running": False,
-            "status": "error",
-            "last_run_time": datetime.now(timezone.utc).isoformat(),
-            "error": f"Gmail auth failed: {exc}",
-            "stats": stats,
-        })
-        return stats
+        PIPELINE_STATUS_FILE.parent.mkdir(exist_ok=True)
+        with open(PIPELINE_STATUS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.warning("Failed to write pipeline status file: %s", e)
 
-    # â”€â”€ Step 2: Fetch emails â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    try:
-        emails = fetch_messages(service, max_results=config.GMAIL_MAX_RESULTS)
-    except Exception as exc:
-        logger.error("Failed to fetch Gmail messages: %s", exc)
-        _update_pipeline_status({
-            "is_running": False,
-            "status": "error",
-            "last_run_time": datetime.now(timezone.utc).isoformat(),
-            "error": f"Gmail fetch failed: {exc}",
-            "stats": stats,
-        })
-        return stats
 
-    # Record quota usage only once Gmail access actually worked
-    quota = record_sync()
-    stats["fetched"] = len(emails)
-    if not emails:
-        logger.info("No emails fetched from Gmail.")
-        _update_pipeline_status({
-            "is_running": False,
-            "status": "idle",
-            "last_run_time": datetime.now(timezone.utc).isoformat(),
-            "duration_seconds": round(time.time() - start_ts, 2),
-            "stats": stats,
-        })
-        return stats
-
-    # â”€â”€ Step 3: Filter already-processed emails â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    processed_ids = get_processed_ids()
-    new_emails = [e for e in emails if e.get("id") not in processed_ids]
-    # Gmail returns newest first; process oldest first so the latest email
-    # about a company decides its final status.
-    new_emails.sort(key=lambda e: e.get("date_iso") or "")
-    stats["new"] = len(new_emails)
-
-    logger.info(
-        "Fetched %d emails | %d already processed | %d new to check",
-        stats["fetched"], len(emails) - len(new_emails), stats["new"],
-    )
-
-    if not new_emails:
-        logger.info("All emails already processed â€” nothing to do.")
-        _update_pipeline_status({
-            "is_running": False,
-            "status": "idle",
-            "last_run_time": datetime.now(timezone.utc).isoformat(),
-            "duration_seconds": round(time.time() - start_ts, 2),
-            "stats": stats,
-        })
-        return stats
-
-    # Database Engine Availability (Supabase or SQLite fallback)
-    db_available = True
-
-    newly_processed_ids = []
-
-    # â”€â”€ Step 4: Per-email pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    for email in new_emails:
-        subject  = email.get("subject", "")
-        sender   = email.get("sender", "")
-        body     = email.get("body", "")
-        gmail_id = email.get("id", "")
-
-        stats["processed"] += 1
-
-        # Pre-filter non-job emails
-        if not is_job_related(subject, body, sender):
-            stats["skipped"] += 1
-            newly_processed_ids.append(gmail_id)  # mark so we don't check again
-            continue
-
-        # a) Classify
-        try:
-            classification = classify_email_ai(email)
-        except Exception as exc:
-            logger.error("Classification error for [%s]: %s", subject[:50], exc)
-            stats["errors"] += 1
-            # Do NOT mark as processed on unexpected exceptions so it can retry later
-            continue
-
-        # Emails the keyword fallback couldn't resolve are retried on a later run
-        # (when Gemini may be available) instead of being marked processed.
-        retry_later = classification.get("method") == "keyword" and is_gemini_configured()
-
-        # b) Validation Layer with Smart Fallbacks
-        company = classification.get("company") or "Unknown"
-        role = classification.get("role") or "Unknown"
-        status = classification.get("status") or "Unknown"
-
-        # Fallback 1: Extract company if unknown
-        if company == "Unknown":
-            extracted_comp = _extract_company(sender, subject, body)
-            if extracted_comp and extracted_comp != "Unknown":
-                company = extracted_comp
-                classification["company"] = company
-
-        # Fallback 2: Extract role if unknown
-        if role == "Unknown":
-            extracted_role = _extract_role(subject, body)
-            if extracted_role and extracted_role != "Unknown":
-                role = extracted_role
-                classification["role"] = role
-            else:
-                role = "Candidate / Intern"
-                classification["role"] = role
-
-        # Fallback 3: Status preservation (if high likelihood job email, mark as Needs Review)
-        if status == "Unknown":
-            if is_job_related(subject, body, sender) and company != "Unknown":
-                status = "Needs Review"
-                classification["status"] = "Needs Review"
-            else:
-                logger.info("  -> Skipping insertion: status remains Unknown for [%s]", subject[:50])
-                stats["skipped"] += 1
-                if not retry_later:
-                    newly_processed_ids.append(gmail_id)
-                continue
-
-        if company == "Unknown":
-            logger.info("  -> Skipping insertion: company remains Unknown for [%s]", subject[:50])
-            stats["skipped"] += 1
-            if not retry_later:
-                newly_processed_ids.append(gmail_id)
-            continue
-
-        logger.info(
-            "  [%s] -> %s @ %s (status=%s)",
-            subject[:50],
-            classification.get("role", "?"),
-            classification.get("company", "?"),
-            classification.get("status"),
-        )
-
-        # AI Company Research & Scam Check
-        from company_researcher import analyze_company
-        analysis = analyze_company(company, role, status)
-        # Keep the more severe of the email-level check (fee requests, spoofed
-        # senders…) and the company-level research, so neither hides the other.
-        if _risk_rank(analysis["scam_risk"]) >= _risk_rank(classification.get("scam_risk")):
-            classification["scam_risk"] = analysis["scam_risk"]
-            classification["risk_notes"] = analysis["risk_notes"]
-        classification["prep_sheet"] = analysis["prep_sheet"]
-            
-        # c) Handle "Job Opportunity" digests specifically
-        if status == "Job Opportunity":
-            from utils import make_email_id
-            from email_history import is_processed, mark_processed
-            
-            opportunity_id = f"opp_{make_email_id('opportunity', company, role)}"
-            
-            if is_processed(opportunity_id):
-                logger.info("  -> Job Opportunity already notified recently: %s at %s. Skipping.", role, company)
-            else:
-                logger.info("  -> Found a new Job Opportunity: %s at %s. Sending Telegram alert (not stored).", role, company)
-                try:
-                    notify_status_change(email, classification, action="opportunity")
-                    mark_processed([opportunity_id])
-                except Exception as e:
-                    logger.error("Failed to send Job Opportunity Telegram alert: %s", e)
-            
-            stats["skipped"] += 1
-            newly_processed_ids.append(gmail_id)
-            continue
-            
-        # d) Database upsert (Supabase or SQLite)
-        if db_available:
-            try:
-                result = upsert_application(email, classification)
-                action = result.get("action", "skipped")
-                status_changed = result.get("status_changed", False)
-
-                if action == "created":
-                    stats["created"] += 1
-                elif action == "updated":
-                    stats["updated"] += 1
-                else:
-                    stats["skipped"] += 1
-
-                # e) Notifications (for actual applications or status changes)
-                if status_changed and action in ("created", "updated"):
-                    try:
-                        notify_status_change(email, classification, action)
-                    except Exception as exc:
-                        logger.warning("Telegram notify failed: %s", exc)
-
-                newly_processed_ids.append(gmail_id)
-
-            except Exception as exc:
-                logger.error("Database upsert error for [%s]: %s", subject[:50], exc)
-                stats["errors"] += 1
-        else:
-            logger.info(
-                "    (Database not configured - classification only: %s)",
-                json.dumps(classification, indent=None),
-            )
-            stats["skipped"] += 1
-            newly_processed_ids.append(gmail_id)
-
-    # â”€â”€ Step 5: Persist processed IDs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if newly_processed_ids:
-        mark_processed(newly_processed_ids)
-        logger.info("Marked %d emails as processed.", len(newly_processed_ids))
-
-    # â”€â”€ Step 6: Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    logger.info("-" * 60)
-    logger.info(
-        "Run complete | fetched=%d new=%d processed=%d "
-        "created=%d updated=%d skipped=%d errors=%d",
-        stats["fetched"], stats["new"], stats["processed"],
-        stats["created"], stats["updated"], stats["skipped"], stats["errors"],
-    )
-
-    try:
-        notify_summary(stats)
-    except Exception:
-        pass
-
-    duration_sec = round(time.time() - start_ts, 2)
+def _finish(run_id: str | None, status: str, stats: dict, started: float, error: str | None = None) -> None:
+    if run_id:
+        cloud_state.finish_run(run_id, status, stats, error)
     _update_pipeline_status({
         "is_running": False,
-        "status": "idle",
+        "status": "error" if status == "error" else "idle",
         "last_run_time": datetime.now(timezone.utc).isoformat(),
-        "duration_seconds": duration_sec,
-        "quota": get_quota(),
+        "duration_seconds": round(time.time() - started, 2),
+        "error": error,
         "stats": stats,
+        "quota": get_quota(),
     })
 
+
+def _fill_gaps(classification: dict, email: dict) -> tuple[bool, bool]:
+    """
+    Validate a classification and fill missing fields with the regex extractors.
+    Returns (keep, resolved): keep=False means don't store it; resolved=False means
+    the fallback tier gave up and a later run (with Gemini) may do better.
+    """
+    subject, body, sender = email.get("subject", ""), email.get("body", ""), email.get("sender", "")
+    company = classification.get("company") or "Unknown"
+    role = classification.get("role") or "Unknown"
+    status = classification.get("status") or "Unknown"
+
+    if company == "Unknown":
+        company = status_classifier._extract_company(sender, subject, body)
+        classification["company"] = company
+    if role == "Unknown":
+        classification["role"] = status_classifier._extract_role(subject, body)
+    if status == "Unknown" and company != "Unknown" and is_job_related(subject, body, sender):
+        status = "Needs Review"
+        classification["status"] = status
+
+    keep = company != "Unknown" and status != "Unknown"
+    retry_later = classification.get("method") == "keyword" and status_classifier.is_gemini_configured()
+    return keep, keep or not retry_later
+
+
+def _handle_opportunity(email: dict, classification: dict) -> None:
+    """Job digests aren't applications: store them on the Radar and alert once."""
+    if cloud_state.available():
+        is_new = cloud_state.save_opportunity(classification)
+    else:
+        opportunity_id = f"opp_{make_email_id('opportunity', classification['company'], classification['role'])}"
+        is_new = not email_history.is_processed(opportunity_id)
+        if is_new:
+            email_history.mark_processed([opportunity_id])
+    if is_new:
+        try:
+            telegram_notifier.notify_status_change(email, classification, action="opportunity")
+        except Exception as exc:
+            logger.warning("Telegram notify failed: %s", exc)
+
+
+def _process_email(email: dict, stats: dict, handled: list, outcomes: Counter, dry_run: bool) -> None:
+    subject, body, sender = email.get("subject", ""), email.get("body", ""), email.get("sender", "")
+    gmail_id = email.get("id", "")
+    stats["processed"] += 1
+
+    if not is_job_related(subject, body, sender):
+        stats["skipped"] += 1
+        handled.append(gmail_id)
+        outcomes["filtered: tier 1"] += 1
+        return
+
+    classification = status_classifier.classify_email_ai(email)
+    keep, resolved = _fill_gaps(classification, email)
+    outcomes[f"{classification.get('method', '?')}: {classification.get('status')}"] += 1
+
+    if not keep:
+        logger.info("  -> Not stored (company or status unknown): [%s]", subject[:50])
+        stats["skipped"] += 1
+        if resolved:
+            handled.append(gmail_id)
+        return
+
+    logger.info("  [%s] -> %s @ %s (status=%s)", subject[:50], classification["role"],
+                classification["company"], classification["status"])
+    if dry_run:
+        return
+
+    if classification["status"] == "Job Opportunity":
+        _handle_opportunity(email, classification)
+        stats["skipped"] += 1
+        handled.append(gmail_id)
+        return
+
+    analysis = company_researcher.analyze_company(classification["company"], classification["role"], classification["status"])
+    # Keep the more severe of the email-level check (fee requests, spoofed senders…)
+    # and the company-level research, so neither hides the other.
+    if _risk_rank(analysis["scam_risk"]) >= _risk_rank(classification.get("scam_risk")):
+        classification["scam_risk"] = analysis["scam_risk"]
+        classification["risk_notes"] = analysis["risk_notes"]
+    classification["prep_sheet"] = analysis["prep_sheet"]
+
+    result = db_manager.upsert_application(email, classification)
+    action = result.get("action", "skipped")
+    stats["created" if action == "created" else "updated" if action == "updated" else "skipped"] += 1
+    handled.append(gmail_id)
+
+    if result.get("status_changed"):
+        try:
+            telegram_notifier.notify_status_change(email, classification, action)
+        except Exception as exc:
+            logger.warning("Telegram notify failed: %s", exc)
+
+
+def run_once(days: str | None = None, force: bool = False, dry_run: bool = False,
+             limit: int | None = None, trigger: str = "manual") -> dict:
+    """
+    Execute one sync. Returns stats: {fetched, new, processed, created, updated, skipped, errors},
+    or {"status": "limit_reached" | "already_running"} if it didn't start.
+    """
+    if not dry_run:
+        allowed, quota = can_sync()
+        if not allowed and not force:
+            logger.warning("Daily sync limit reached (%d/%d). Resets at %s.",
+                           quota["syncs_today"], quota["daily_limit"], quota.get("resets_at", "00:00 UTC"))
+            return {"status": "limit_reached", "quota": quota}
+        if cloud_state.available() and cloud_state.active_run():
+            logger.info("Another sync is already running; skipping this one.")
+            return {"status": "already_running"}
+
+    started = time.time()
+    effective_days = days or config.GMAIL_DAYS
+    query = config.GMAIL_QUERY
+    if effective_days and effective_days.lower() != "all":
+        query = f"{config._base_query} newer_than:{effective_days}d"
+
+    stats = {"fetched": 0, "new": 0, "processed": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0}
+    run_id = None
+    if not dry_run:
+        run_id = cloud_state.start_run(trigger, effective_days) if cloud_state.available() else None
+        _update_pipeline_status({
+            "is_running": True, "status": "running",
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "days_filter": effective_days or "ALL", "stats": stats,
+        })
+
+    status_classifier.reset_gemini_session()
+    print_startup_diagnostics()
+
+    try:
+        service = gmail_reader.get_gmail_service()
+        ids = gmail_reader.list_message_ids(service, max_results=config.GMAIL_MAX_RESULTS, query=query)
+    except Exception as exc:
+        logger.error("Gmail access failed: %s", exc)
+        if not dry_run:
+            _finish(run_id, "error", stats, started, f"Gmail access failed: {exc}")
+        return stats
+
+    if not dry_run:
+        record_sync()
+
+    new_ids = email_history.filter_unprocessed(ids)
+    if limit:
+        new_ids = new_ids[:limit]
+    stats["fetched"] = len(ids)
+    stats["new"] = len(new_ids)
+    logger.info("%d matching emails, %d new", len(ids), len(new_ids))
+
+    emails = [e for e in (gmail_reader.fetch_message(service, i) for i in new_ids) if e]
+    # Gmail returns newest first; oldest first lets the latest email decide the status.
+    emails.sort(key=lambda e: e.get("date_iso") or "")
+
+    handled: list = []
+    outcomes: Counter = Counter()
+    for email in emails:
+        try:
+            _process_email(email, stats, handled, outcomes, dry_run)
+        except Exception as exc:
+            # Not marked as handled, so it's retried on the next run.
+            logger.error("Failed to process [%s]: %s", email.get("subject", "")[:50], exc)
+            stats["errors"] += 1
+
+    if dry_run:
+        print("Dry run (nothing stored, no alerts). Outcomes:", dict(outcomes))
+        return stats
+
+    email_history.mark_processed(handled)
+    logger.info("Run complete | %s", " ".join(f"{k}={v}" for k, v in stats.items()))
+    try:
+        telegram_notifier.notify_summary(stats)
+    except Exception as exc:
+        logger.warning("Telegram summary failed: %s", exc)
+    _finish(run_id, "success", stats, started)
     return stats
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="InternPulse - Gmail scanner and application tracker")
-    parser.add_argument("--days", "-d", type=str, default=None, help="Scan emails newer than N days (e.g. 7, 14, 30)")
-    parser.add_argument("--force", "-f", action="store_true", help="Bypass daily Gmail sync limit")
+    parser = argparse.ArgumentParser(description="InternPulse: Gmail scanner and application tracker")
+    parser.add_argument("--days", "-d", type=str, default=None, help="Scan emails newer than N days (e.g. 7, 30)")
+    parser.add_argument("--force", "-f", action="store_true", help="Bypass the daily sync limit")
+    parser.add_argument("--dry-run", action="store_true", help="Classify only: no writes, no alerts, no quota used")
+    parser.add_argument("--limit", type=int, default=None, help="Process at most N new emails")
     args = parser.parse_args()
-    run_once(days=args.days, force=args.force)
-
-
+    run_once(days=args.days, force=args.force, dry_run=args.dry_run, limit=args.limit)

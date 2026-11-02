@@ -38,6 +38,11 @@ def _build_config_stub() -> types.ModuleType:
     stub.DAILY_SYNC_LIMIT = 5
     stub.GMAIL_MAX_RESULTS = 50
     stub.GMAIL_QUERY = ""
+    stub.GMAIL_DAYS = ""
+    stub.GEMINI_MODEL = "gemini-flash-latest"
+    stub.SUPABASE_URL = ""
+    stub.SUPABASE_KEY = ""
+    stub.GMAIL_TOKEN_FILE = _SESSION_DIR / "token.json"
     stub._base_query = ""
     stub.setup_logging = lambda name="internpulse": logging.getLogger(name)
     stub.print_startup_diagnostics = lambda: None
@@ -52,6 +57,7 @@ def _build_config_stub() -> types.ModuleType:
 sys.modules["config"] = _build_config_stub()
 sys.path.insert(0, str(REPO))
 
+import cloud_state  # noqa: E402
 import config  # noqa: E402  (the stub)
 import db_manager  # noqa: E402
 import email_history  # noqa: E402
@@ -74,7 +80,9 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(status_classifier, "_current_client_idx", 0)
     monkeypatch.setattr(config, "GEMINI_API_KEY", "")
     status_classifier.reset_gemini_session()
+    cloud_state.reset()
     yield tmp_path
+    cloud_state.reset()
 
 
 @pytest.fixture

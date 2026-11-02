@@ -48,15 +48,11 @@ SUPABASE_KEY: str = (
     or os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
 )
 
-# ── Notion (Legacy / Optional) ───────────────────────────────────────────────
-NOTION_API_KEY: str = os.getenv("NOTION_API_KEY", "")
-NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID", "")
-
-# ── OpenAI ───────────────────────────────────────────────────────────────────
-OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-
-# ── Gemini (free alternative to OpenAI) ──────────────────────────────────────
+# ── Gemini ───────────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+# Tried when the main model is overloaded (503) or times out; "" disables it.
+GEMINI_FALLBACK_MODEL: str = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
 
 # ── Telegram ─────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -109,7 +105,8 @@ if _token_json:
         logging.error("Failed to write GMAIL_TOKEN_JSON from env: %s", e)
 
 # ── Daily Sync Limit & Quota ────────────────────────────────────────────────
-DAILY_SYNC_LIMIT: int = int(os.getenv("DAILY_SYNC_LIMIT", "5"))
+# Each sync only spends API calls on new emails, so this is a safety net, not a budget.
+DAILY_SYNC_LIMIT: int = int(os.getenv("DAILY_SYNC_LIMIT", "12"))
 
 # ── Data dir ─────────────────────────────────────────────────────────────────
 DATA_DIR: Path = ROOT_DIR / "data"
@@ -156,7 +153,7 @@ def _key_status(val: str, prefix: str = "your_") -> str:
     """Return a short status string for a config key value."""
     if not val or val.startswith(prefix):
         return "NOT SET"
-    return f"{val[:8]}..."
+    return "SET"
 
 
 def print_startup_diagnostics() -> None:
