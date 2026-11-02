@@ -2,493 +2,165 @@
 
 # ⚡ InternPulse
 
-### An autonomous AI-powered internship tracking system
+### Your internship applications, tracked automatically from Gmail — on your phone
 
-*Reads your Gmail → Classifies with Gemini AI → Detects scam companies → Stores in Supabase → Alerts you on Telegram — all automatically, with smart daily quota management.*
-
-<br/>
+*Gmail → Gemini classification → scam check → Supabase → Telegram alerts → mobile app*
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Gemini AI](https://img.shields.io/badge/Gemini_AI-2.5_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
+[![Gemini](https://img.shields.io/badge/Gemini-Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
-[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://core.telegram.org/bots)
-[![Next.js](https://img.shields.io/badge/Dashboard-Next.js_16-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
-[![GitHub Actions](https://img.shields.io/badge/CI/CD-GitHub_Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)](https://github.com/features/actions)
+[![Next.js](https://img.shields.io/badge/App-Next.js_16-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
+[![Android](https://img.shields.io/badge/Android-Capacitor-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://capacitorjs.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 </div>
 
 ---
 
-## 📖 What is InternPulse?
+## 📖 What it does
 
-Applying to internships means drowning in emails — confirmations, rejections, OAs, interview invites — across 10 different portals. **InternPulse automates all of that.**
+Applying to internships means status updates scattered across company ATS emails (Workday, Greenhouse, Lever), Internshala, Unstop, LinkedIn and recruiters. InternPulse reads them for you:
 
-It silently monitors your Gmail inbox, uses Google Gemini AI to understand each email, and:
-- Logs the application to your **Supabase (PostgreSQL) database**
-- Sends you a **Telegram alert** with company scam analysis and interview prep tips
-- Picks out the best **job opportunities** from digest emails (Internshala, LinkedIn, Unstop)
-- Runs **daily or on-demand** via GitHub Actions, Web Dashboard, and Telegram — respecting configurable daily sync quotas
+- **Classifies every application email** — Applied, In review, Assessment, Interview, Offer, Rejected — and extracts company, role, links and interview dates.
+- **Keeps one record per company** that only moves forward (a late "thanks for applying" can't undo an interview; a rejection or offer always lands).
+- **Flags scams** — fee requests, big brands writing from Gmail, Telegram task scams, known fake-internship platforms.
+- **Collects job leads** from LinkedIn/Internshala/Unstop alert emails.
+- **Alerts you on Telegram** when something changes, and shows everything in a fast mobile app.
 
----
+## 📱 The app
 
-## ✨ Features
+| Tab | What you see |
+|---|---|
+| **Today** | Interviews (with date and "add to calendar"), assessments with their links, applications that need a decision, scam warnings, new job leads |
+| **Pipeline** | Every application, searchable and filterable by stage. Tap one to change its status, open the original email, read the AI prep sheet, keep notes or delete it |
+| **Radar** | Job leads from alert emails (save / hide / open) and companies with scam warnings |
+| **More** | Sync status and history, a "Deep scan" for the last 30 days, setup checks, sign-out |
 
-| Feature | Details |
-|:---|:---|
-| 🧠 **Gemini AI Classification** | Understands the intent of every email — Applied, Rejected, OA, Interview, Offer |
-| ✅ **Validated AI Output** | Gemini answers in JSON mode; statuses, platforms and confidence are checked against one shared status list |
-| 🔡 **Keyword Fallback** | Zero downtime if Gemini is rate-limited or unavailable — a keyword classifier takes over, and unresolved emails are retried later |
-| 🕵️ **Scam Company Detection** | Web-searches every new company and uses AI to flag High/Medium/Low scam risk |
-| 🎯 **Interview Prep Sheets** | Auto-generates tech stack, recent news & likely interview questions the moment you get an interview |
-| 💼 **Job Opportunity Digests** | Extracts the best AI/ML/Data roles from digest emails and sends instant Telegram alerts |
-| 📊 **Supabase Database** | One row per company (UNIQUE canonical slug), safe re-runs, statuses never move backwards except for final outcomes (Rejected / Offer) |
-| 🔔 **Rich Telegram Alerts** | Beautifully formatted messages with emoji, company name, role, risk score, and prep tips |
-| 🌐 **Next.js Web Dashboard** | A cinematic dark-mode UI with Kanban board, funnel chart, activity timeline, and safety scanner |
-| ⏱️ **Daily Quota & On-Demand** | Daily sync schedule with calendar rollover, quota protection, and instant web/Telegram triggers |
+It opens instantly from the last saved copy, works offline, supports pull-to-refresh, and the Android back button closes sheets and returns to *Today*.
 
----
-
-## 🏗️ How It Works
+## 🏗️ How it works
 
 ```
-Your Gmail Inbox
-       │
-       ▼
-  gmail_reader.py        ← OAuth2 fetch of latest emails
-       │
-       ▼
-  utils.py               ← Pre-filters non-job emails (saves AI quota)
-       │
-       ▼
-  status_classifier.py   ← Gemini Flash (JSON) → validation → keyword fallback
-       │
-       ├──→ company_researcher.py  ← DuckDuckGo + Gemini scam analysis
-       │
-       ▼
-  db_manager.py          ← Universal DB manager (Supabase PostgREST + SQLite)
-       │
-       ▼
-  telegram_notifier.py   ← Rich HTML alert to your Telegram
-       │
-       ▼
-  email_history.py       ← Mark email as processed (prevents re-processing)
+        every 3 h (GitHub Actions)              "Sync" in the app / Telegram /scan
+                    │                                         │
+                    ▼                                         ▼
+     ┌───────────────────────── Render worker (server.py) ─────────────────────────┐
+     │ main.run_once                                                                 │
+     │  1. list Gmail message IDs → skip the ones already handled (Supabase)         │
+     │  2. Tier 1: relevance filter (utils.is_job_related)                           │
+     │  3. Tier 2: Gemini Flash, schema-enforced JSON, validated                     │
+     │     ↳ overloaded → Gemini Flash Lite      ↳ unavailable → Tier 3 keywords     │
+     │  4. scam rules → company research (web search + Gemini, cached)               │
+     │  5. upsert one row per company · job digests → opportunities                  │
+     │  6. Telegram alert on change · record the run in sync_runs                    │
+     └───────────────────────────────────────┬───────────────────────────────────────┘
+                                             ▼
+                                  Supabase (PostgreSQL)
+                                             ▲
+           Next.js on Vercel (/api/*, password-protected)  ◄──  Android app (Capacitor shell)
 ```
 
----
+| File | Role |
+|---|---|
+| `main.py` | Orchestrates one sync (`--dry-run`, `--limit`, `--days`, `--force`) |
+| `gmail_reader.py` | OAuth (read-only scope), paginated listing, message parsing |
+| `status_classifier.py` | Three-tier classifier: relevance gate → Gemini → keyword fallback |
+| `threat_detector.py`, `company_researcher.py` | Scam rules, web research and interview prep sheets |
+| `db_manager.py` | Applications: company-slug dedup and status rules (Supabase, SQLite fallback) |
+| `cloud_state.py` | Durable state in Supabase: processed emails, research cache, sync runs, opportunities |
+| `server.py` | The Render worker: `/health`, `/api/sync` |
+| `web/` | Next.js mobile app, API routes and Telegram webhook; `web/android` is the Capacitor shell |
+| `eval/` | Measures classification accuracy on emails you label |
+| `tests/` | Offline pytest suite (no network) |
 
-## 🚀 Setup Guide
+## 🚀 Setup
 
-> Follow these steps carefully. The whole setup takes about 10 minutes.
+You need a Google account (Gmail + a Gemini API key), a Supabase project, free Render and Vercel accounts, and optionally a Telegram bot.
 
-### Step 1 — Prerequisites
-
-Make sure you have:
-- **Python 3.12+** → [Download](https://python.org/downloads)
-- **Git** → [Download](https://git-scm.com)
-- A **Google Account** (the Gmail you want to monitor)
-- A **Supabase account** (free) → [supabase.com](https://supabase.com)
-- A **Telegram account**
-
----
-
-### Step 2 — Clone & Install
+### 1. Local install and Gmail authorisation
 
 ```bash
 git clone https://github.com/chaitanyakumarAI/Intern-Pulse.git
 cd Intern-Pulse
-
-# Create virtual environment
-python -m venv .venv
-
-# Activate it:
-# Windows:
-.venv\Scripts\activate
-# macOS / Linux:
-source .venv/bin/activate
-
-# Install dependencies
+python -m venv .venv && .venv\Scripts\activate      # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env                                  # fill in the keys below
+python main.py --dry-run --limit 3                    # first run opens a browser to authorise Gmail
+python doctor.py                                      # read-only setup check
 ```
 
----
+Gmail: in Google Cloud Console enable the **Gmail API**, create an **OAuth client (Desktop app)**, save it as `credentials.json`, and **publish** the consent screen (otherwise the token expires every 7 days).
 
-### Step 3 — Get Your API Keys
+### 2. Database
 
-#### 🔵 Google Gemini (Free)
-1. Go to [aistudio.google.com](https://aistudio.google.com)
-2. Click **Get API Key** → **Create API Key**
-3. Copy the key — it looks like `AIzaSy...`
+Supabase → **SQL Editor** → paste [`supabase_schema.sql`](supabase_schema.sql) → **Run**. It is safe to run again after upgrades.
 
-#### 🟢 Supabase Database
-1. Go to [supabase.com](https://supabase.com) and create a free project (e.g., `InternPulse`)
-2. In your Supabase Dashboard, open **SQL Editor** → **New Query**
-3. Paste the contents of `supabase_schema.sql` and click **Run**
-4. Go to **Project Settings** → **API**:
-   - Copy **Project URL** (`https://xyz.supabase.co`)
-   - Copy **service_role secret** (or `anon public` key)
+Moving to a new project (or the old one was paused and removed)? Your applications are backed up locally in `data/`: after running the schema in the new project and updating `.env`, run `python scripts/restore_backup.py --apply`.
 
-#### 🔵 Telegram Bot
-1. Open Telegram and search for **@BotFather**
-2. Send `/newbot` and follow the prompts to create a bot
-3. Copy the **Bot Token** (looks like `123456789:AAxxxxxx`)
-4. To get your **Chat ID**: search for **@userinfobot** on Telegram and send it `/start`. It will reply with your Chat ID.
+### 3. Worker (Render)
 
-#### 🟠 Gmail OAuth
-1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Create a new project (e.g., `InternPulse`)
-3. Go to **APIs & Services** → **Enable APIs** → search and enable **Gmail API**
-4. Go to **APIs & Services** → **OAuth consent screen**:
-   - User type: **External** → Fill in app name → Save
-   - Go to **Audience** → click **Publish App** *(prevents 7-day token expiry)*
-5. Go to **APIs & Services** → **Clients** → **Create OAuth Client ID**:
-   - Application type: **Desktop App** → Create
-   - Click **Download JSON** → rename it to `credentials.json` → place it in the project root
+Create a **Web Service** from this repo (start command `python server.py`) with:
 
----
+| Variable | Value |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_KEY` | Project URL and the **secret** (`service_role`) key |
+| `GEMINI_API_KEY` | One key, or several separated by commas (rotated on rate limits) |
+| `GMAIL_CREDENTIALS_JSON`, `GMAIL_TOKEN_JSON` | Contents of `credentials.json` and `token.json` |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Optional alerts |
+| `SYNC_API_TOKEN` | A long random string (also set on Vercel and as a GitHub secret) |
 
-### Step 4 — Configure Environment
+### 4. App (Vercel)
 
-Copy the example file and fill in your keys:
+Import the repo with **root directory `web`** and set:
 
-```bash
-cp .env.example .env
-```
+| Variable | Value |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_KEY` | Same as Render (the secret key never reaches the browser) |
+| `DASHBOARD_PASSWORD` | Your app password |
+| `SYNC_API_TOKEN` | Same as Render |
+| `RENDER_WORKER_URL` | Your worker URL (default `https://ai-job-tracker-worker.onrender.com`) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` | Optional, for bot commands |
 
-Edit `.env`:
+Register the bot: `python scripts/set_telegram_webhook.py https://<your-app>.vercel.app`.
 
-```env
-# Supabase
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your_supabase_service_role_or_anon_key
+Once **More → Setup** shows *Database access: Connected with the private server key*, run [`supabase_lockdown.sql`](supabase_lockdown.sql) to close the old public table policies.
 
-# Google Gemini
-GEMINI_API_KEY=AIzaSy...
+### 5. Schedule (GitHub Actions)
 
-# Telegram
-TELEGRAM_BOT_TOKEN=123456789:AAxxxxxx
-TELEGRAM_CHAT_ID=123456789
-```
+Add the repository secret `SYNC_API_TOKEN` (and the variable `RENDER_WORKER_URL` if yours differs). **Scheduled Gmail Sync** wakes the worker every 3 hours; the pipeline's own secrets stay on Render.
 
----
+### 6. Phone
 
-### Step 5 — Seed / Migrate Database
+Download **[InternPulse.apk](https://github.com/chaitanyakumarAI/Intern-Pulse/releases/download/android-latest/InternPulse.apk)** on the phone and open it (allow "Install unknown apps" when asked). Updates install over the previous version, and web changes reach the app as soon as Vercel deploys. Alternatively, open the Vercel URL in Chrome and choose **Add to Home screen**.
 
-Run the migration script to seed your database with existing tracked applications:
+## 💬 Telegram commands
 
-```bash
-python migrate_notion_to_supabase.py
-```
+`/today` · `/list [n]` · `/stats` · `/status <company> <stage>` · `/scan` · `/quota` · `/web`
 
-> **Zero-Config Fallback:** If `SUPABASE_URL` is not yet configured, the system automatically uses a high-performance local SQLite database (`data/jobs.db`).
-
----
-
-### Step 6 — First Run (Gmail Auth)
-
-```bash
-python main.py
-```
-
-On the **first run only**, a browser window will open asking you to sign in to Google and grant Gmail read access. After you approve, a `token.json` file is saved automatically — you won't be asked again.
-
----
-
-### Step 7 — Verify Everything Works
-
-```bash
-python test_setup.py
-```
-
-You should see all checks passing. If any fail, the error message will tell you exactly what's wrong.
-
-To run the **offline test suite** (no Gmail, Gemini, Supabase or Telegram calls):
+## 🧪 Tests and evaluation
 
 ```bash
 pip install -r requirements-dev.txt
-pytest
+pytest                                                              # offline: stubbed config, temp SQLite, fake Gemini
+python eval/evaluate_classifier.py export --count 100 --days 180    # then label eval/data/labels.csv
+python eval/evaluate_classifier.py run --tier both                  # precision, recall, macro-F1, coverage
 ```
 
-> `test_integration.py` is a separate live smoke check: it uses your real Gmail token, database and Telegram bot, so `pytest` never runs it.
-
----
-
-### Step 8 — On-Demand Sync & Daily Limit
-
-InternPulse uses an enforced daily sync quota (default 5 syncs/day, configurable via `DAILY_SYNC_LIMIT`) with automatic rollover at 00:00 UTC, removing the need for CPU-intensive background poll loops.
-
-```bash
-# Run a quota-checked sync
-python main.py
-
-# Or run via scheduler script
-python scheduler.py
-
-# Force sync (bypasses daily quota for testing)
-python main.py --force
-```
-
----
-
-### Step 9 — 2-Way Interactive Telegram Bot
-
-You can control your application pipeline, check stats, and trigger Gmail scans directly from Telegram via `@InternSlaveBot`:
-
-| Command | Action | Example |
-|---|---|---|
-| `/status <Company> <Status>` | Update job stage in the database | `/status Google Offer` |
-| `/list [limit]` | View latest applications and status badges | `/list 8` |
-| `/scan [days]` | Trigger an on-demand Gmail sync cycle | `/scan 7` |
-| `/quota` | Check remaining daily sync quota | `/quota` |
-| `/stats` | View active pipeline conversion & velocity | `/stats` |
-| `/help` | View interactive command guide | `/help` |
-
-**To run the interactive Telegram Bot listener locally:**
-```bash
-python telegram_bot.py
-```
-*(When deployed to Vercel, the Next.js API webhook at `/api/telegram/webhook` handles commands 24/7 automatically).*
-
----
-
-## ⚙️ GitHub Actions (Fully Cloud Automated — Recommended)
-
-This is the best way to run InternPulse — it runs automatically in the cloud once a day (08:00 UTC) for free. Each run first executes the offline test suite, keeps its processed-email state in the Actions cache, and never overlaps with another run.
-
-### Setup
-
-1. Fork or push this repo to your GitHub account
-2. Go to your repo → **Settings** → **Secrets and variables** → **Actions**
-3. Click **New repository secret** and add each of these:
-
-| Secret Name | Where to get it |
-|---|---|
-| `SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
-| `SUPABASE_KEY` | Supabase → Project Settings → API → `service_role` key |
-| `GEMINI_API_KEY` | From Google AI Studio |
-| `TELEGRAM_BOT_TOKEN` | From @BotFather on Telegram |
-| `TELEGRAM_CHAT_ID` | From @userinfobot on Telegram |
-| `GMAIL_CREDENTIALS_JSON` | Paste the **entire contents** of `credentials.json` |
-| `GMAIL_TOKEN_JSON` | Paste the **entire contents** of `token.json` (generated in Step 6) |
-
-4. Done! The workflow in `.github/workflows/tracker.yml` runs automatically every day at 08:00 UTC.
-
-> **To trigger it manually:** Go to your repo → **Actions** tab → **AI Internship Tracker** → **Run workflow**
-
----
-
-## 🌐 Web Dashboard
-
-A cinematic dark-mode dashboard is included in the `/web` folder.
-
-```bash
-cd web
-npm install
-npm run dev
-# Open http://localhost:3000
-```
-
-**Set the Supabase credentials for the dashboard:**
-
-Create `web/.env.local`:
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_public_key
-```
-
-### Dashboard Pages
-
-| Page | Route | Description |
-|---|---|---|
-| Dashboard | `/` | Application list, stats, safety scanner, activity chart |
-| Job Board | `/pipeline` | Kanban board by status |
-| AI Insights | `/hub` | Job opportunity alerts & tips |
-
----
-
-## 📁 Project Structure
-
-```
-AI-Internship-Tracker/
-│
-├── 🐍 Python Backend
-│   ├── main.py                 # Pipeline orchestrator (quota-enforced entry point)
-│   ├── db_manager.py           # Universal Supabase & SQLite database manager
-│   ├── sync_quota.py           # Daily sync quota manager & calendar rollover
-│   ├── scheduler.py            # On-demand quota-checked sync runner
-│   ├── server.py               # Render web worker with health check server
-│   ├── gmail_reader.py         # Gmail OAuth2 + email fetching & parsing
-│   ├── status_classifier.py    # Gemini AI + keyword fallback classifier
-│   ├── company_researcher.py   # AI scam detection & interview prep generator
-│   ├── threat_detector.py      # Multi-layer scam & certificate mill threat engine
-│   ├── telegram_notifier.py    # Rich HTML Telegram message builder & sender
-│   ├── telegram_bot.py         # 2-way interactive Telegram bot command runner
-│   ├── email_history.py        # Processed email cache (prevents duplicates)
-│   ├── dashboard.py            # CLI pipeline dashboard & stats
-│   ├── config.py               # All env vars, logging setup, constants
-│   └── utils.py                # Shared helpers: retry, HTML parser, hashing
-│
-├── 🛠️ Utilities & Database
-│   ├── supabase_schema.sql     # PostgreSQL schema, triggers & RLS policies
-│   ├── migrate_notion_to_supabase.py # One-time migration & seed utility
-│   ├── reprocess.py            # Wipes cache & reprocesses last 100 emails
-│   ├── test_setup.py           # Smoke test for your environment setup
-│   └── test_integration.py     # Live integration smoke checks (31 checks; real services)
-│
-├── 🧪 Tests & Evaluation
-│   ├── tests/                  # Offline pytest suite (stubbed config, temp SQLite, fake Gemini)
-│   ├── eval/                   # Accuracy evaluation: export → label → score
-│   ├── pytest.ini
-│   └── requirements-dev.txt
-│
-├── 🌐 Web Dashboard (Next.js 15)
-│   └── web/
-│       ├── src/app/            # Pages: Dashboard, Pipeline (Kanban), Hub
-│       ├── src/components/     # Sidebar, Charts, ParticleSphere, JobCard
-│       └── package.json
-│
-├── ⚙️ Automation
-│   ├── .github/workflows/tracker.yml   # Daily sync (08:00 UTC or manual); runs offline tests first
-│   └── .github/workflows/build-apk.yml # Builds the Android (Capacitor) debug APK
-│
-├── .env.example                # Template — copy to .env and fill in keys
-├── credentials.json            # Gmail OAuth client (never commit!)
-├── token.json                  # Gmail token cache (never commit!)
-├── requirements.txt
-└── LICENSE
-```
-
----
-
-## 📱 Use It on Your Phone
-
-The Android app (`web/android`, Capacitor) is a thin shell around the deployed dashboard at `https://ai-internship-tracker.vercel.app`, so every dashboard change reaches the phone as soon as Vercel redeploys — no reinstall needed.
-
-1. **Get the APK:** GitHub → **Actions** → **Build Android APK** → latest successful run → download the **InternPulse-Debug-APK** artifact (it is rebuilt automatically on every push that changes `web/`).
-2. **Install it:** copy the `.apk` to your phone and open it (allow "Install unknown apps" for your file manager when Android asks).
-3. **Sign in** with your `DASHBOARD_PASSWORD`; the session lasts 90 days.
-4. **Sync from the phone:** *Scan Inbox Now* hands the sync to the Render worker (the phone and Vercel can't run Python). A sleeping free-tier worker takes up to a minute to wake on the first tap.
-
-Background syncing doesn't need the phone at all: the GitHub Actions workflow runs daily, and the Render worker syncs whenever it's awake.
-
----
-
-## 🎯 Measuring Classification Accuracy
-
-`eval/evaluate_classifier.py` scores the classifier against emails you label yourself. Email content and labels stay in `eval/data/` (git-ignored).
-
-```bash
-# 1. Export a sample of your job emails (reads Gmail, no AI calls)
-python eval/evaluate_classifier.py export --count 100 --days 180
-
-# 2. Fill in eval/data/labels.csv: is_job (yes/no), status, company, role
-
-# 3. Score the keyword tier (offline), or both tiers (one Gemini call per email)
-python eval/evaluate_classifier.py run
-python eval/evaluate_classifier.py run --tier both
-```
-
-The report (`eval/results/report-*.md`) shows relevance precision/recall, status accuracy, coverage (share not sent to *Needs Review*), per-status precision/recall/F1, macro-F1, a confusion matrix, company/role accuracy and end-to-end record accuracy.
-
----
-
-## 🔐 Security Settings
-
-| Variable | Where | Purpose |
-|---|---|---|
-| `TELEGRAM_CHAT_ID` | Python + Vercel | The bot only obeys this chat. If it is unset, all commands are refused |
-| `TELEGRAM_WEBHOOK_SECRET` | Python (when registering the webhook) + Vercel | Telegram sends it with every update; the webhook rejects requests without it |
-| `SYNC_API_TOKEN` | Render + Vercel | Required as `Authorization: Bearer …` to trigger `/api/sync` on the Render worker; `?force=true` only works with it |
-| `DASHBOARD_PASSWORD` | Vercel | Puts the dashboard, its API and the Android app behind a password (90-day session cookie). Unset = open to anyone with the URL |
-| `RENDER_WORKER_URL` | Vercel | Render worker the dashboard and Telegram `/scan` hand syncs to (defaults to `https://ai-job-tracker-worker.onrender.com`) |
-
----
-
-## 📬 Telegram Notification Examples
-
-**New Application Tracked:**
-```
-🆕 New application tracked
-
-📝 Status: Applied
-🏢 Company: Google
-💼 Role: STEP Intern (Software)
-📧 Subject: Thank you for applying — Google Internship
-📅 Time: 2026-05-23 06:00 UTC
-
-✅ Risk Assessment: Low
-Google is a globally recognized company with verified presence.
-```
-
-**Interview Scheduled + Prep Sheet:**
-```
-🆕 New application tracked
-
-🎯 Status: Interview Scheduled
-🏢 Company: Bluestock Fintech
-💼 Role: Data Analyst Intern
-📅 Time: 2026-05-21 17:35 UTC
-
-✅ Risk Assessment: Low
-Established fintech firm with active LinkedIn and Glassdoor reviews.
-
-🧠 Interview Prep Sheet:
-• Tech Stack: Python, SQL, Power BI, Excel
-• Likely Questions: SQL aggregation, data cleaning, case studies
-• Recent News: Expanding analytics team in 2026
-```
-
-**Hot Job Opportunity:**
-```
-🔥 Hot Job Recommendation Found!
-
-💼 Status: Job Opportunity
-🏢 Company: Amazon
-💼 Role: ML Engineer Intern
-🔗 Job Link: https://amazon.jobs/...
-```
-
----
+CI runs the Python tests and the web lint, type-check and build on every push.
 
 ## 🔧 Troubleshooting
 
-| Problem | Solution |
+| Problem | Fix |
 |---|---|
-| **Browser doesn't open on first run** | Run `python main.py` from a terminal that can open a browser window (not SSH) |
-| **`invalid_grant` Gmail error** | Your token expired — run `python main.py` again to re-authenticate, then update `GMAIL_TOKEN_JSON` in GitHub secrets |
-| **Supabase errors / data only in SQLite** | Check `SUPABASE_URL` / `SUPABASE_KEY` and that you ran `supabase_schema.sql`. Without them the pipeline falls back to `data/jobs.db` |
-| **No Telegram messages** | Run `python -c "import telegram_notifier; telegram_notifier.send_message('test')"` to verify connectivity |
-| **Gemini 429 rate limit** | Normal — the keyword fallback activates automatically, no action needed |
-| **All emails show `Unknown`** | Gemini may be down — wait an hour or check [status.cloud.google.com](https://status.cloud.google.com) |
-| **GitHub Action fails** | Check that all 7 secrets are added correctly. Go to **Actions → failed run → logs** to see the exact error |
-| **`pytest` opens an unrelated window or fails with `py.path`** | A personal script named `py.py` in your Python installation folder is shadowing pytest's `py` module — rename that script |
-
----
-
-## 🤝 Contributing
-
-Pull requests are welcome!
-
-1. Fork the repo
-2. Create your feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push: `git push origin feature/amazing-feature`
-5. Open a Pull Request
-
----
+| "Couldn't load your data: fetch failed" | The Supabase project is paused or gone (free projects pause when idle). Restore it from the Supabase dashboard, or create a new one and run `scripts/restore_backup.py --apply` |
+| More → Setup says "public anon key" | Set `SUPABASE_KEY` on Vercel to the secret key |
+| "Sync history & job leads" warning | Run `supabase_schema.sql` |
+| Sync says the worker is unreachable | Free Render workers sleep; the first sync after a while takes about a minute |
+| `invalid_grant` from Gmail | Run `python main.py --dry-run --limit 1` locally, then update `GMAIL_TOKEN_JSON` on Render |
+| Gemini 503 "high demand" in logs | Normal: the pipeline switches to Gemini Flash Lite, then to keywords |
+| Android won't install the update | APKs before v2.0 were signed with a different key: uninstall the old app once |
+| `pytest` opens an unrelated window | A personal script named `py.py` in your Python install folder shadows pytest's `py` module — rename it |
 
 ## 📄 License
 
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-
-**Built with ❤️ to automate the most tedious part of job hunting.**
-
-If InternPulse helped you, please ⭐ **star the repo** — it helps others find it!
-
-[⭐ Star on GitHub](https://github.com/chaitanyakumarAI/Intern-Pulse) &nbsp;·&nbsp; [🐛 Report a Bug](https://github.com/chaitanyakumarAI/Intern-Pulse/issues) &nbsp;·&nbsp; [💡 Request a Feature](https://github.com/chaitanyakumarAI/Intern-Pulse/issues)
-
-</div>
+MIT — see [LICENSE](LICENSE).

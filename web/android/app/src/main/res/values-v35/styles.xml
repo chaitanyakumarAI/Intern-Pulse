@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Android 15 forces apps that target API 35 to draw behind the system bars.
+        Opting out keeps solid dark bars, so the web content never sits under the
+        status bar or the gesture area.
+    -->
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
+        <item name="android:windowBackground">@color/ic_launcher_background</item>
+        <item name="android:statusBarColor">#07080F</item>
+        <item name="android:navigationBarColor">#0A0C16</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

@@ -1,362 +1,176 @@
 import { NextResponse } from 'next/server';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { db, dbJson, isDbConfigured } from '@/lib/db';
+import { cloudSyncInfo } from '@/lib/server-state';
 import { workerFetch } from '@/lib/worker';
+import { ACTIVE_STATUSES, type Application } from '@/lib/types';
 
-// Room for a Render free-tier cold start when /scan or /quota wakes the worker.
+// Room for a Render free-tier cold start when /scan wakes the worker.
 export const maxDuration = 60;
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://ai-internship-tracker.vercel.app';
 
-const STATUS_MAP: Record<string, string> = {
-  'applied':             'Applied',
-  'app':                 'Applied',
-  'under review':        'Under Review',
-  'review':              'Under Review',
-  'reviewing':           'Under Review',
-  'oa sent':             'OA Sent',
-  'oa':                  'OA Sent',
-  'assessment':          'OA Sent',
-  'test':                'OA Sent',
-  'interview scheduled': 'Interview Scheduled',
-  'interview':           'Interview Scheduled',
-  'round':               'Interview Scheduled',
-  'offer':               'Offer',
-  'offered':             'Offer',
-  'rejected':            'Rejected',
-  'reject':              'Rejected',
-  'job opportunity':     'Job Opportunity',
-  'opportunity':         'Job Opportunity',
-  'opp':                 'Job Opportunity',
-  'lead':                'Job Opportunity',
+/** Words people type after /status, mapped to stored statuses (longest phrases first). */
+const STATUS_WORDS: [string, string][] = [
+  ['interview scheduled', 'Interview Scheduled'], ['under review', 'Under Review'], ['needs review', 'Needs Review'],
+  ['oa sent', 'OA Sent'], ['interview', 'Interview Scheduled'], ['round', 'Interview Scheduled'],
+  ['assessment', 'OA Sent'], ['test', 'OA Sent'], ['oa', 'OA Sent'], ['review', 'Under Review'],
+  ['reviewing', 'Under Review'], ['applied', 'Applied'], ['offer', 'Offer'], ['offered', 'Offer'],
+  ['rejected', 'Rejected'], ['reject', 'Rejected'], ['ghosted', 'Ghosted'],
+];
+
+const EMOJI: Record<string, string> = {
+  Applied: '📝', 'Under Review': '🔍', 'OA Sent': '💻', 'Interview Scheduled': '🎯',
+  Offer: '🎉', Rejected: '❌', Ghosted: '👻', 'Needs Review': '⚠️',
 };
 
-const STATUS_EMOJI: Record<string, string> = {
-  'Applied':             '📝',
-  'Under Review':        '🔍',
-  'OA Sent':             '💻',
-  'Interview Scheduled': '🎯',
-  'Offer':               '🎉',
-  'Rejected':            '❌',
-  'Job Opportunity':     '💼',
-};
+const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-// Helper to send a message back to Telegram
-async function sendTelegramMessage(chatId: number, text: string) {
+async function reply(chatId: number, text: string) {
   if (!TELEGRAM_TOKEN) return;
-  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
-  await fetch(url, {
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: text,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    }),
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
   });
 }
 
-// Find a job by fuzzy company name matching
-async function findJobByCompany(companyName: string) {
-  if (!isSupabaseConfigured || !supabase) return null;
+async function applications(): Promise<Application[]> {
+  if (!isDbConfigured()) return [];
+  return dbJson<Application[]>('applications?select=id,company,role,status,applied_date,interview_date,application_link&order=last_checked.desc.nullslast');
+}
 
-  const { data } = await supabase
-    .from('applications')
-    .select('id, company, role, status')
-    .order('last_checked', { ascending: false })
-    .limit(50);
+function findCompany(apps: Application[], query: string): Application | undefined {
+  const q = query.toLowerCase().trim();
+  return apps.find((a) => a.company.toLowerCase() === q) ?? apps.find((a) => a.company.toLowerCase().includes(q) || q.includes(a.company.toLowerCase()));
+}
 
-  if (!data) return null;
-  const searchStr = companyName.toLowerCase().trim();
-
-  // 1. Exact match
-  for (const row of data) {
-    if (row.company && row.company.toLowerCase().trim() === searchStr) {
-      return {
-        id: String(row.id),
-        company: row.company,
-        role: row.role || 'Candidate / Intern',
-        currentStatus: row.status || 'Applied',
-      };
-    }
+function parseStatusCommand(args: string): { company: string; status: string } | null {
+  const lower = args.toLowerCase().trim();
+  for (const [word, status] of STATUS_WORDS) {
+    if (lower.endsWith(` ${word}`)) return { company: args.slice(0, args.length - word.length).trim(), status };
   }
-
-  // 2. Substring match
-  for (const row of data) {
-    if (
-      row.company &&
-      (row.company.toLowerCase().includes(searchStr) || searchStr.includes(row.company.toLowerCase()))
-    ) {
-      return {
-        id: String(row.id),
-        company: row.company,
-        role: row.role || 'Candidate / Intern',
-        currentStatus: row.status || 'Applied',
-      };
-    }
-  }
-
   return null;
 }
 
-async function fetchRecentJobs(limit = 8) {
-  if (!isSupabaseConfigured || !supabase) return [];
+async function handle(chatId: number, command: string, args: string) {
+  switch (command) {
+    case '/start':
+    case '/help':
+      return reply(chatId,
+        '⚡ <b>InternPulse</b>\n\n' +
+        '/today — what needs action now\n' +
+        '/list [n] — recent applications\n' +
+        '/stats — pipeline numbers\n' +
+        '/status &lt;company&gt; &lt;stage&gt; — e.g. <code>/status Google interview</code>\n' +
+        '/scan — sync Gmail now\n' +
+        '/quota — syncs left today\n' +
+        '/web — open the app');
 
-  const { data } = await supabase
-    .from('applications')
-    .select('id, company, role, status, applied_date')
-    .order('last_checked', { ascending: false })
-    .limit(Math.min(limit, 20));
+    case '/today': {
+      const apps = await applications();
+      const interviews = apps.filter((a) => a.status === 'Interview Scheduled');
+      const tests = apps.filter((a) => a.status === 'OA Sent');
+      const review = apps.filter((a) => a.status === 'Needs Review').length;
+      const lines = ['📅 <b>Today</b>\n'];
+      if (interviews.length) lines.push(`🎯 <b>Interviews</b>\n${interviews.map((a) => `• ${esc(a.company)}${a.interview_date ? ` — ${new Date(a.interview_date).toUTCString().slice(0, 22)} UTC` : ''}`).join('\n')}\n`);
+      if (tests.length) lines.push(`💻 <b>Assessments</b>\n${tests.map((a) => `• ${esc(a.company)}${a.application_link ? ` — <a href="${esc(a.application_link)}">open</a>` : ''}`).join('\n')}\n`);
+      if (review) lines.push(`⚠️ ${review} application(s) need review in the app.`);
+      if (lines.length === 1) lines.push('Nothing needs action right now. ✨');
+      return reply(chatId, lines.join('\n'));
+    }
 
-  if (!data) return [];
+    case '/list': {
+      const limit = Math.min(Math.max(parseInt(args, 10) || 8, 1), 20);
+      const apps = (await applications()).slice(0, limit);
+      if (!apps.length) return reply(chatId, '📋 No applications yet.');
+      return reply(chatId, [`📋 <b>Latest ${apps.length}</b>\n`,
+        ...apps.map((a, i) => `${i + 1}. ${EMOJI[a.status] ?? '📌'} <b>${esc(a.company)}</b> — ${esc(a.role)}\n    <code>${esc(a.status)}</code>`)].join('\n'));
+    }
 
-  return data.map((r) => ({
-    id: String(r.id),
-    company: r.company || 'Unknown',
-    role: r.role || 'Role unspecified',
-    status: r.status || 'Applied',
-    date: r.applied_date ? String(r.applied_date).split('T')[0] : '',
-  }));
-}
+    case '/stats': {
+      const apps = await applications();
+      const count = (s: string) => apps.filter((a) => a.status === s).length;
+      const active = apps.filter((a) => ACTIVE_STATUSES.has(a.status)).length;
+      const responded = apps.filter((a) => !['Applied', 'Needs Review', 'Ghosted'].includes(a.status)).length;
+      const rate = apps.length ? Math.round((responded / apps.length) * 100) : 0;
+      return reply(chatId,
+        `📊 <b>Pipeline</b>\n\nTracked: <b>${apps.length}</b> · Active: <b>${active}</b>\n` +
+        `🎯 Interviews: ${count('Interview Scheduled')} · 💻 Tests: ${count('OA Sent')}\n` +
+        `🎉 Offers: ${count('Offer')} · ❌ Rejected: ${count('Rejected')}\n` +
+        `⚠️ Needs review: ${count('Needs Review')}\n\nResponse rate: <b>${rate}%</b>`);
+    }
 
-async function fetchPipelineStats() {
-  if (!isSupabaseConfigured || !supabase) return null;
+    case '/status': {
+      const parsed = parseStatusCommand(args);
+      if (!parsed?.company) return reply(chatId, 'Usage: <code>/status Google interview</code>');
+      const app = findCompany(await applications(), parsed.company);
+      if (!app) return reply(chatId, `❌ No application found for <b>${esc(parsed.company)}</b>. Try /list.`);
+      await db(`applications?id=eq.${app.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: parsed.status, last_checked: new Date().toISOString() }),
+      });
+      return reply(chatId, `${EMOJI[parsed.status] ?? '✅'} <b>${esc(app.company)}</b>: <s>${esc(app.status)}</s> → <b>${esc(parsed.status)}</b>`);
+    }
 
-  const { data } = await supabase
-    .from('applications')
-    .select('status')
-    .limit(200);
+    case '/scan': {
+      const sync = await cloudSyncInfo().catch(() => null);
+      if (sync?.running) return reply(chatId, '⏳ A sync is already running.');
+      if (sync?.quota && sync.quota.remaining <= 0) return reply(chatId, `⏱️ Daily limit reached (${sync.quota.limit}). Resets at 00:00 UTC.`);
+      try {
+        const res = await workerFetch('/api/sync?trigger=telegram', { method: 'POST' });
+        return reply(chatId, res.ok ? '🔄 Sync started. You will get alerts for anything new.' : `⚠️ The sync worker returned ${res.status}.`);
+      } catch (err) {
+        return reply(chatId, `❌ Could not reach the sync worker: ${esc(err instanceof Error ? err.message : err)}`);
+      }
+    }
 
-  if (!data) return null;
+    case '/quota': {
+      const sync = await cloudSyncInfo().catch(() => null);
+      if (!sync?.quota) return reply(chatId, '⏱️ Quota unavailable (run supabase_schema.sql to enable sync history).');
+      const last = sync.lastRun ? `\nLast sync: ${new Date(sync.lastRun.started_at).toUTCString().slice(0, 22)} UTC (${sync.lastRun.status})` : '';
+      return reply(chatId, `⏱️ Syncs today: <b>${sync.quota.used}/${sync.quota.limit}</b>${last}`);
+    }
 
-  const counts: Record<string, number> = {};
-  for (const row of data) {
-    const s = row.status || 'Applied';
-    counts[s] = (counts[s] || 0) + 1;
+    case '/web':
+      return reply(chatId, `📱 ${APP_URL}`);
+
+    default:
+      return reply(chatId, 'Unknown command. Send /help.');
   }
-
-  const total = data.length;
-  const applied = counts['Applied'] || 0;
-  const review = counts['Under Review'] || 0;
-  const oas = counts['OA Sent'] || 0;
-  const interviews = counts['Interview Scheduled'] || 0;
-  const offers = counts['Offer'] || 0;
-  const rejected = counts['Rejected'] || 0;
-  const tracked = total - (counts['Job Opportunity'] || 0);
-  const responseRate = tracked > 0 ? Math.round(((tracked - applied) / tracked) * 100) : 0;
-
-  return { total, applied, review, oas, interviews, offers, rejected, responseRate };
 }
 
 export async function POST(req: Request) {
   try {
-    // Reject requests that don't carry the secret registered with setWebhook
-    // (secret_token), so only Telegram can drive this endpoint.
+    // Only Telegram knows the secret registered with setWebhook (secret_token).
     const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
     if (webhookSecret && req.headers.get('x-telegram-bot-api-secret-token') !== webhookSecret) {
       return NextResponse.json({ ok: false }, { status: 401 });
     }
 
     const update = await req.json();
+    const text: string | undefined = update?.message?.text;
+    const chatId: number | undefined = update?.message?.chat?.id;
+    if (!text || chatId == null) return NextResponse.json({ ok: true });
 
-    // Ignore edits or non-messages
-    if (!update.message || !update.message.text) {
-      return NextResponse.json({ ok: true });
-    }
-
-    const chatId = update.message.chat.id;
-    const text = update.message.text.trim();
-
-    // Owner-only bot: fail closed if the owner's chat ID isn't configured
-    const authChatId = process.env.TELEGRAM_CHAT_ID;
-    if (!authChatId || authChatId.startsWith('your_')) {
+    // Owner-only bot: fail closed if the owner's chat ID isn't configured.
+    const owner = process.env.TELEGRAM_CHAT_ID;
+    if (!owner || owner.startsWith('your_')) {
       console.error('TELEGRAM_CHAT_ID is not set; ignoring Telegram command.');
       return NextResponse.json({ ok: true });
     }
-    if (String(chatId) !== authChatId) {
-      await sendTelegramMessage(chatId, '⛔ <b>Unauthorized access.</b> This bot is restricted to its owner.');
+    if (String(chatId) !== owner) {
+      await reply(chatId, '⛔ This bot is private.');
       return NextResponse.json({ ok: true });
     }
 
-    const cmdToken = text.split(/\s+/)[0]?.toLowerCase().split('@')[0] || '';
-    const argsText = text.substring(cmdToken.length).trim();
-
-    if (cmdToken === '/start' || cmdToken === '/help') {
-      const helpMsg =
-        '⚡ <b>InternPulse AI Bot — Command Center</b>\n\n' +
-        'Here are the commands you can use:\n\n' +
-        '🔍 <b>/scan</b> — Trigger an on-demand Gmail scan now\n' +
-        '🌐 <b>/web</b> — Get direct links to the Web Dashboard\n' +
-        '⏱️ <b>/quota</b> — Check today\'s remaining sync quota\n' +
-        '📋 <b>/list [limit]</b> — View recent applications and stages\n' +
-        '📊 <b>/stats</b> — View active pipeline metrics & conversion\n' +
-        '🔄 <b>/status &lt;Company&gt; &lt;Status&gt;</b> — Update an application stage\n\n' +
-        '<i>Examples:</i>\n' +
-        '  • <code>/status Google Interview</code>\n' +
-        '  • <code>/status Microsoft Offer</code>\n' +
-        '  • <code>/status Amazon OA</code>\n\n' +
-        '❓ <b>/help</b> — Show this command reference.';
-      await sendTelegramMessage(chatId, helpMsg);
-    } else if (cmdToken === '/status' || cmdToken === '/update') {
-      const parts = argsText.split(/\s+/).filter(Boolean);
-      if (parts.length < 2) {
-        await sendTelegramMessage(
-          chatId,
-          '⚠️ <b>Usage:</b> <code>/status &lt;Company&gt; &lt;Status&gt;</code>\n\n' +
-          'Examples:\n' +
-          '  • <code>/status Google Interview</code>\n' +
-          '  • <code>/status Microsoft Offer</code>'
-        );
-        return NextResponse.json({ ok: true });
-      }
-
-      let companyInput = '';
-      let targetStatus = '';
-
-      const joinedLower = parts.join(' ').toLowerCase();
-      for (const [key, canon] of Object.entries(STATUS_MAP)) {
-        if (joinedLower.endsWith(key)) {
-          targetStatus = canon;
-          const keyWordsCount = key.split(' ').length;
-          companyInput = parts.slice(0, parts.length - keyWordsCount).join(' ');
-          break;
-        }
-      }
-
-      if (!targetStatus) {
-        const lastWord = parts[parts.length - 1].toLowerCase();
-        targetStatus = STATUS_MAP[lastWord] || parts[parts.length - 1];
-        companyInput = parts.slice(0, -1).join(' ');
-      }
-
-      if (!companyInput) {
-        await sendTelegramMessage(chatId, '⚠️ Please specify a company name. Example: <code>/status Google Offer</code>');
-        return NextResponse.json({ ok: true });
-      }
-
-      await sendTelegramMessage(chatId, `🔍 Searching for <b>${companyInput}</b>...`);
-
-      const job = await findJobByCompany(companyInput);
-      if (!job) {
-        await sendTelegramMessage(
-          chatId,
-          `❌ Could not find a recent application for <b>${companyInput}</b>.\n` +
-          'Send <code>/list</code> to verify companies currently in your pipeline.'
-        );
-        return NextResponse.json({ ok: true });
-      }
-
-      // Update in Supabase
-      if (isSupabaseConfigured && supabase) {
-        await supabase
-          .from('applications')
-          .update({
-            status: targetStatus,
-            last_checked: new Date().toISOString(),
-          })
-          .eq('id', job.id);
-      }
-
-      const emoji = STATUS_EMOJI[targetStatus] || '✅';
-      await sendTelegramMessage(
-        chatId,
-        `${emoji} <b>Application Status Updated!</b>\n\n` +
-        `🏢 <b>Company:</b> ${job.company}\n` +
-        (job.role ? `💼 <b>Role:</b> ${job.role}\n` : '') +
-        `🔄 <b>Stage:</b> <s>${job.currentStatus || 'Applied'}</s> ➔ <b>${targetStatus}</b>\n\n` +
-        '<i>Synchronized live with database.</i>'
-      );
-    } else if (cmdToken === '/list' || cmdToken === '/pipeline' || cmdToken === '/jobs') {
-      const limit = parseInt(argsText, 10) || 8;
-      const jobs = await fetchRecentJobs(limit);
-      if (!jobs || jobs.length === 0) {
-        await sendTelegramMessage(chatId, '📋 No applications found in database.');
-        return NextResponse.json({ ok: true });
-      }
-
-      const lines = [`📋 <b>Active Applications (${jobs.length} latest):</b>\n`];
-      jobs.forEach((j, i) => {
-        const emoji = STATUS_EMOJI[j.status] || '📌';
-        const dateStr = j.date ? ` • <i>${j.date}</i>` : '';
-        lines.push(
-          `${i + 1}. ${emoji} <b>${j.company}</b> — ${j.role}\n` +
-          `   Stage: <code>${j.status}</code>${dateStr}`
-        );
-      });
-      lines.push('\n<i>To change a status, use <code>/status &lt;Company&gt; &lt;Status&gt;</code></i>');
-      await sendTelegramMessage(chatId, lines.join('\n'));
-    } else if (cmdToken === '/stats' || cmdToken === '/metrics') {
-      const stats = await fetchPipelineStats();
-      if (!stats) {
-        await sendTelegramMessage(chatId, '📊 Could not calculate metrics from database.');
-        return NextResponse.json({ ok: true });
-      }
-
-      const msg =
-        '📊 <b>Career Pipeline Velocity</b>\n\n' +
-        `📥 <b>Total Applications:</b> ${stats.total}\n` +
-        `📝 <b>Awaiting Review:</b> ${stats.applied}\n` +
-        `🔍 <b>In Progress / Review:</b> ${stats.review}\n` +
-        `💻 <b>Online Assessments:</b> ${stats.oas}\n` +
-        `🎯 <b>Interviews Scheduled:</b> ${stats.interviews}\n` +
-        `🎉 <b>Offers Extended:</b> ${stats.offers}\n` +
-        `❌ <b>Rejections:</b> ${stats.rejected}\n\n` +
-        `📈 <b>Positive Response Rate:</b> <b>${stats.responseRate}%</b>\n\n` +
-        '<i>Use <code>/list</code> to see recent updates or <code>/status &lt;Co&gt; &lt;Stage&gt;</code> to advance.</i>';
-      await sendTelegramMessage(chatId, msg);
-    } else if (cmdToken === '/scan' || cmdToken === '/sync') {
-      await sendTelegramMessage(
-        chatId,
-        '⚡ <b>Initiating Gmail Inbox Sync...</b>\n\n' +
-        'Triggering background scan on cloud worker.\n' +
-        'Parsed applications will be written to Supabase in real time.'
-      );
-      try {
-        const resp = await workerFetch('/api/sync', { method: 'POST' });
-        if (!resp.ok) {
-          await sendTelegramMessage(chatId, `⚠️ Cloud worker returned status ${resp.status}. Please check Render logs.`);
-        }
-      } catch (err) {
-        await sendTelegramMessage(chatId, `❌ Failed to trigger worker: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    } else if (cmdToken === '/web' || cmdToken === '/dashboard' || cmdToken === '/hub') {
-      const webUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://ai-internship-tracker.vercel.app';
-      await sendTelegramMessage(
-        chatId,
-        '🌐 <b>InternPulse Web Dashboard:</b>\n' +
-        `Main: ${webUrl}\n` +
-        `Pipeline: ${webUrl}/pipeline\n` +
-        `Analytics Hub: ${webUrl}/hub\n\n` +
-        '<i>Track your applications with 3D visuals, threat detection, and pipeline velocity.</i>'
-      );
-    } else if (cmdToken === '/quota' || cmdToken === '/limit') {
-      try {
-        const resp = await workerFetch('/api/quota');
-        if (resp.ok) {
-          const q = await resp.json();
-          await sendTelegramMessage(
-            chatId,
-            '⏱️ <b>Daily Sync Quota:</b>\n\n' +
-            `• <b>Syncs Used Today:</b> ${q.syncs_today} / ${q.daily_limit}\n` +
-            `• <b>Remaining:</b> ${q.remaining}\n` +
-            `• <b>Resets At:</b> ${q.resets_at || '00:00 UTC'}`
-          );
-        } else {
-          await sendTelegramMessage(chatId, '⏱️ Quota: 5 daily syncs allowed. Automated polling runs periodically.');
-        }
-      } catch {
-        await sendTelegramMessage(chatId, '⏱️ Quota: Standard limit is 5 syncs/day. Automated polling is active.');
-      }
-    } else {
-      await sendTelegramMessage(
-        chatId,
-        `❓ Unrecognized command: <code>${text}</code>\nSend <code>/help</code> for available commands.`
-      );
-    }
-
+    const trimmed = text.trim();
+    const command = (trimmed.split(/\s+/)[0] || '').toLowerCase().split('@')[0];
+    await handle(chatId, command, trimmed.slice(trimmed.split(/\s+/)[0].length).trim());
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error('Telegram webhook processing error:', error);
-    return NextResponse.json({ ok: false }, { status: 500 });
+    console.error('Telegram webhook error:', error);
+    // 200 so Telegram doesn't retry the same failing update forever.
+    return NextResponse.json({ ok: false });
   }
 }

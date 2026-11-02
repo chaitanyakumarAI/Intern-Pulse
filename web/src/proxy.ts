@@ -26,5 +26,5 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   // Skip Next.js internals and static files (icons, images, manifest, robots, sitemap).
-  matcher: ['/((?!_next/static|_next/image|assets/|favicon.ico|manifest.webmanifest|robots.txt|sitemap.xml|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|assets/|favicon.ico|manifest.webmanifest|robots.txt|sw.js|offline.html|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)'],
 };

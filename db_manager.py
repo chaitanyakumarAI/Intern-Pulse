@@ -288,7 +288,8 @@ def upsert_application(email: dict, classification: dict, _retry_on_conflict: bo
     scam_risk = classification.get("scam_risk", "Low")
     risk_notes = classification.get("risk_notes", "")
     prep_sheet = classification.get("prep_sheet", "")
-    notes = classification.get("notes", "")
+    # `notes` belongs to you (edited in the app). The classifier's reasoning isn't stored there.
+    notes = ""
     latest_email = {
         "last_subject": (email.get("subject") or "")[:300] or None,
         "last_gmail_id": email.get("id") or None,
@@ -327,9 +328,6 @@ def upsert_application(email: dict, classification: dict, _retry_on_conflict: bo
         if scam_risk and scam_risk != "Unknown": update_payload["scam_risk"] = scam_risk
         if risk_notes: update_payload["risk_notes"] = risk_notes
         if prep_sheet: update_payload["prep_sheet"] = prep_sheet
-        old_notes = existing.get("notes") or ""
-        if notes and notes not in old_notes:
-            update_payload["notes"] = f"{old_notes}\n{notes}".strip()
 
         sb = _get_supabase_config()
         if sb:

@@ -14,18 +14,10 @@
     "@capacitor/android": "^8.5.3",
     "@capacitor/cli": "^7.6.9",
     "@capacitor/core": "^8.5.3",
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.6.1",
-    "@supabase/supabase-js": "^2.109.0",
-    "@types/three": "^0.184.1",
-    "framer-motion": "^12.38.0",
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
     "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "recharts": "^3.8.1",
-    "three": "^0.184.0",
-    "ws": "^8.22.0"
+    "react-dom": "19.2.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

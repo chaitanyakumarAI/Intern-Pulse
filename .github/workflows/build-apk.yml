@@ -1,19 +1,29 @@
 name: Build Android APK
 
+# The app is a shell around the deployed web app, so it only needs rebuilding
+# when the shell itself changes.
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
-      - 'web/**'
+      - 'web/android/**'
+      - 'web/capacitor.config.ts'
+      - 'web/public/offline.html'
+      - 'web/public/index.html'
+      - 'web/package.json'
       - '.github/workflows/build-apk.yml'
-    branches:
-      - main
+
+permissions:
+  contents: write   # to publish the APK on the android-latest release
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build APK
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -31,42 +41,57 @@ jobs:
           distribution: 'zulu'
           java-version: '21'
 
-      - name: Verify Android SDK & Install API 35
+      - name: Install Android SDK 35
         run: |
-          echo "Using Android SDK at: $ANDROID_HOME"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null || true
+
+      # Android only installs an update over the old app if both are signed with
+      # the same key. Keep one debug key for every build instead of a new one each time.
+      - name: Restore signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: internpulse-debug-keystore-v1
 
       - name: Install Web Dependencies
-        run: |
-          cd web
-          npm ci
+        working-directory: web
+        run: npm ci
 
       - name: Sync Capacitor
-        run: |
-          cd web
-          npx cap sync android
+        working-directory: web
+        run: npx cap sync android
 
       - name: Build Android Debug APK
+        working-directory: web/android
         run: |
-          cd web/android
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace > gradle_build.log 2>&1 || BUILD_FAILED=true
-          if [ "$BUILD_FAILED" = "true" ]; then
-            echo "## ❌ Gradle Build Error Details" >> $GITHUB_STEP_SUMMARY
+          if ! ./gradlew assembleDebug --stacktrace > gradle_build.log 2>&1; then
+            echo "## ❌ Gradle build failed" >> $GITHUB_STEP_SUMMARY
             echo '```text' >> $GITHUB_STEP_SUMMARY
             tail -n 80 gradle_build.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat gradle_build.log
             exit 1
           fi
-          echo "## ✅ Build Succeeded" >> $GITHUB_STEP_SUMMARY
-          echo "Listing generated APK files:"
-          find . -name "*.apk" -type f
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/InternPulse.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InternPulse-Debug-APK
-          path: web/android/**/*.apk
+          name: InternPulse-APK
+          path: InternPulse.apk
           retention-days: 14
+
+      # Stable download link for the phone:
+      # https://github.com/<owner>/<repo>/releases/download/android-latest/InternPulse.apk
+      - name: Publish to the android-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view android-latest > /dev/null 2>&1 || \
+            gh release create android-latest --title "InternPulse Android (latest)" --prerelease \
+              --notes "Latest Android build. Install it on your phone, or update over the previous version."
+          gh release upload android-latest InternPulse.apk --clobber
+          echo "## ✅ APK ready" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/${{ github.repository }}/releases/download/android-latest/InternPulse.apk" >> $GITHUB_STEP_SUMMARY

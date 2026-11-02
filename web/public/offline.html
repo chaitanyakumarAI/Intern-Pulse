@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07080f">
+  <title>InternPulse — offline</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #07080f; color: #f4f6fb; font-family: system-ui, -apple-system, Roboto, sans-serif; }
+    main { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; box-sizing: border-box; }
+    img { width: 72px; height: 72px; border-radius: 18px; }
+    h1 { font-size: 20px; margin: 8px 0 0; }
+    p { margin: 0; color: rgba(203, 213, 240, 0.65); font-size: 15px; max-width: 280px; }
+    button { margin-top: 14px; min-height: 44px; padding: 0 22px; border: 0; border-radius: 10px; background: #8b5cf6; color: #fff; font: inherit; font-weight: 650; }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/icon-192.png" alt="">
+    <h1>You're offline</h1>
+    <p>InternPulse needs a connection to open the first time. Your saved data will show as soon as you're back online.</p>
+    <button onclick="location.href='/'">Try again</button>
+  </main>
+  <script>window.addEventListener('online', function () { location.href = '/'; });</script>
+</body>
+</html>

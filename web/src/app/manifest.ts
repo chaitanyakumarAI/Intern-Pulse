@@ -2,27 +2,19 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'InternPulse | AI Job Tracker',
+    name: 'InternPulse',
     short_name: 'InternPulse',
-    description: 'Real-time AI-powered job application tracker with scam detection and interview cheat sheets.',
+    description: 'Your internship applications, tracked automatically from Gmail.',
     start_url: '/',
+    scope: '/',
     display: 'standalone',
-    background_color: '#06070d',
-    theme_color: '#06070d',
-    orientation: 'portrait-primary',
+    background_color: '#07080f',
+    theme_color: '#07080f',
+    orientation: 'portrait',
     icons: [
-      {
-        src: '/icon-192.png',
-        sizes: '192x192',
-        type: 'image/png',
-        purpose: 'maskable',
-      },
-      {
-        src: '/icon-512.png',
-        sizes: '512x512',
-        type: 'image/png',
-        purpose: 'any',
-      },
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   };
 }
