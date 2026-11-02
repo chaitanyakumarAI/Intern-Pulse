@@ -31,8 +31,12 @@ export async function cloudSyncInfo(): Promise<SyncInfo | null> {
   return { running: isRunning(lastRun), lastRun, quota: { used, limit, remaining: Math.max(0, limit - used) } };
 }
 
-/** Project root when the Python pipeline sits next to this app (local dev), else null. */
+/**
+ * Project root when the Python pipeline can run next to this app (local dev), else null.
+ * Hosted deployments ship main.py too, but can't run it, so they never count as local.
+ */
 export function localProjectRoot(): string | null {
+  if (process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME) return null;
   for (const dir of [process.cwd(), path.resolve(process.cwd(), '..')]) {
     if (fs.existsSync(path.join(dir, 'main.py'))) return dir;
   }
