@@ -9,6 +9,7 @@ If Supabase isn't configured or the tables don't exist yet, available() is False
 and callers fall back to their local JSON files.
 """
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional
 
@@ -19,15 +20,19 @@ logger = logging.getLogger(__name__)
 STALE_RUN_MINUTES = 20   # a "running" row older than this belongs to a crashed worker
 _ID_CHUNK = 100          # keeps in.(...) filters within URL length limits
 
+RECHECK_SECONDS = 300    # a long-running worker notices tables created (or a DB restored) later
+
 _tables_ready: Optional[bool] = None
+_checked_at = 0.0
 
 
 def available() -> bool:
     """True when Supabase is configured and the state tables exist."""
-    global _tables_ready
-    if _tables_ready is None:
+    global _tables_ready, _checked_at
+    if _tables_ready is None or (not _tables_ready and time.monotonic() - _checked_at > RECHECK_SECONDS):
         resp = db_manager.rest("GET", "sync_runs?select=id&limit=1")
         _tables_ready = resp is not None and resp.status_code == 200
+        _checked_at = time.monotonic()
         if not _tables_ready:
             logger.info("Cloud state unavailable; using local state files. Run supabase_schema.sql to enable it.")
     return _tables_ready
@@ -35,8 +40,9 @@ def available() -> bool:
 
 def reset() -> None:
     """Forget the cached availability check (used by tests)."""
-    global _tables_ready
+    global _tables_ready, _checked_at
     _tables_ready = None
+    _checked_at = 0.0
 
 
 def _ok(resp) -> bool:

@@ -79,3 +79,12 @@ def test_company_key_is_url_encoded(fake_rest):
     fake = fake_rest({("GET", "company_research"): (200, [])})
     cloud_state.company_get("at&t inc")
     assert "company_key=eq.at%26t%20inc" in fake.calls[-1][1]
+
+
+def test_unavailable_is_rechecked_later(fake_rest, monkeypatch):
+    fake_rest({})
+    assert cloud_state.available() is False
+    monkeypatch.setattr(db_manager, "rest", FakeRest({("GET", "sync_runs"): (200, [])}))
+    assert cloud_state.available() is False          # cached for a while
+    monkeypatch.setattr(cloud_state, "_checked_at", 0.0 - cloud_state.RECHECK_SECONDS - 1)
+    assert cloud_state.available() is True           # tables created since: picked up
