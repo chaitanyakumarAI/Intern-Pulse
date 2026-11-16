@@ -125,6 +125,12 @@ export function useAppData() {
     return res.message;
   }, []);
 
+  const startRecheck = useCallback(async () => {
+    const res = await api<{ message: string }>('/api/recheck', { method: 'POST' });
+    setData((prev) => (prev ? { ...prev, sync: { ...prev.sync, running: true } } : prev));
+    return res.message;
+  }, []);
+
   const updateApplication = useCallback(async (id: string, patch: Partial<Pick<Application, 'status' | 'notes'>>) => {
     const before = data;
     if (before) commit({ ...before, applications: before.applications.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
@@ -163,7 +169,7 @@ export function useAppData() {
     }
   }, [data, commit]);
 
-  return { data, savedAt, loading, error, online, refresh, startSync, updateApplication, deleteApplication, updateOpportunity };
+  return { data, savedAt, loading, error, online, refresh, startSync, startRecheck, updateApplication, deleteApplication, updateOpportunity };
 }
 
 export type AppData = ReturnType<typeof useAppData>;

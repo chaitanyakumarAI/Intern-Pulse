@@ -408,3 +408,25 @@ def upsert_application(email: dict, classification: dict, _retry_on_conflict: bo
         _sync_json_backup()
         logger.info("SQLite created application %s: %s @ %s [%s]", row_id[:8], role, company, status)
         return {"action": "created", "id": row_id, "status_changed": True}
+
+
+# ── Maintenance helpers (used by recheck.py) ─────────────────────────────────
+
+def list_needs_review(limit: int = 50) -> List[Dict[str, Any]]:
+    """'Needs Review' rows whose original Gmail message is known (newest first)."""
+    resp = rest("GET", "applications?select=id,company,company_slug,role,status,last_gmail_id"
+                       f"&status=eq.Needs%20Review&last_gmail_id=not.is.null&order=last_checked.desc&limit={int(limit)}")
+    # The local SQLite fallback doesn't store Gmail IDs, so there is nothing to re-check there.
+    return resp.json() if resp is not None and resp.status_code == 200 else []
+
+
+def update_application_fields(row_id: str, fields: Dict[str, Any]) -> bool:
+    """Patch an application's fields (status, company display name, role)."""
+    payload = {**fields, "last_checked": now_iso()}
+    resp = rest("PATCH", f"applications?id=eq.{row_id}", json=payload, prefer="return=minimal")
+    return resp is not None and resp.status_code in (200, 204)
+
+
+def delete_application(row_id: str) -> bool:
+    resp = rest("DELETE", f"applications?id=eq.{row_id}", prefer="return=minimal")
+    return resp is not None and resp.status_code in (200, 204)

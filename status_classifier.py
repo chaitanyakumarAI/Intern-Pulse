@@ -270,7 +270,7 @@ def classify_email_ai(email: dict) -> dict:
     return result
 
 
-def _call_gemini_with_retries(prompt: str) -> Optional[str]:
+def _call_gemini_with_retries(prompt: str, schema: Optional[dict] = None) -> Optional[str]:
     """
     Call Gemini and return the raw JSON text, or None if this email should use
     the fallback. Sets the run-wide circuit breaker on configuration errors.
@@ -287,7 +287,7 @@ def _call_gemini_with_retries(prompt: str) -> Optional[str]:
                 config={
                     "temperature": 0.1,
                     "response_mime_type": "application/json",
-                    "response_schema": _RESPONSE_SCHEMA,
+                    "response_schema": schema or _RESPONSE_SCHEMA,
                 },
             )
             raw = (response.text or "").strip()
@@ -360,6 +360,19 @@ def _finalise_gemini_result(email: dict, result: dict) -> dict:
 
 # ── JSON parsing helper ────────────────────────────────────────────────────────
 
+def _iso_datetime(value) -> Optional[str]:
+    """
+    The database column is a timestamp, so a free-text date from the model
+    ("next Tuesday 3pm") would fail the whole write. Keep only real ISO dates.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return None
+
+
 def _parse_llm_response(raw: str) -> dict:
     """Parse the LLM JSON output, fixing common issues."""
     # Strip markdown fences if present
@@ -397,7 +410,7 @@ def _parse_llm_response(raw: str) -> dict:
         "status":         status,
         "platform":       platform,
         "oa_link":        data.get("action_link") or data.get("oa_link") or None,
-        "interview_date": data.get("interview_date") or None,
+        "interview_date": _iso_datetime(data.get("interview_date")),
         "recruiter_name": data.get("recruiter_name") or None,
         "confidence_score": confidence,
         "notes":          f"Conf: {confidence}. {data.get('reasoning', '')}"[:2000],
@@ -719,7 +732,13 @@ def _keyword_classify(email: dict) -> dict:
     ]
     subj_sender = f"{subject} {sender}".lower()
     
-    if any(rej in subj_sender for rej in rejections):
+    # Job-alert senders and subject shapes ("X at Y and 5 more", "Y is hiring")
+    alert_pattern = re.search(
+        r"jobalerts|jobs-listings|jobs-noreply|job-alerts|\bis hiring\b|\band \d+ more\b|\bnew jobs?\b|jobs? similar to",
+        subj_sender,
+    )
+
+    if alert_pattern or any(rej in subj_sender for rej in rejections):
         status = "Job Opportunity"
     elif any(kw in text for kw in _OFFER_KW) or re.search(r"congratulations.*(?:selected|offer|join)", text):
         status = "Offer"

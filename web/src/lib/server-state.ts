@@ -7,7 +7,7 @@ import type { AppState, Application, Opportunity, SyncInfo, SyncRun } from '@/li
 const STALE_RUN_MS = 20 * 60 * 1000; // matches cloud_state.STALE_RUN_MINUTES
 
 export function dailyLimit(): number {
-  return parseInt(process.env.DAILY_SYNC_LIMIT || '12', 10);
+  return parseInt(process.env.DAILY_SYNC_LIMIT || '20', 10);
 }
 
 function todayStart(): string {
@@ -22,7 +22,7 @@ function isRunning(run: SyncRun | null): boolean {
 export async function cloudSyncInfo(): Promise<SyncInfo | null> {
   const [lastRes, todayRes] = await Promise.all([
     db('sync_runs?select=started_at,finished_at,status,trigger,stats,error&order=started_at.desc&limit=1'),
-    db(`sync_runs?select=id&status=in.(running,success)&started_at=gte.${todayStart()}`),
+    db(`sync_runs?select=id&status=in.(running,success)&trigger=neq.recheck&started_at=gte.${todayStart()}`),
   ]);
   if (!lastRes.ok || !todayRes.ok) return null;
   const lastRun = ((await lastRes.json()) as SyncRun[])[0] ?? null;

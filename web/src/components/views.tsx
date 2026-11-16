@@ -227,12 +227,32 @@ function Check({ ok, title, detail }: { ok: boolean; title: string; detail: stri
   );
 }
 
-export function More({ data, savedAt, onSync, onSignOut }: {
-  data: AppState; savedAt: number | null; onSync: (days?: number) => void; onSignOut: () => void;
+/** One line describing what the last run did (a sync or an AI re-check). */
+function runSummary(stats: Record<string, number>, trigger: string | null): string {
+  if (trigger === 'recheck') {
+    const parts = [
+      `${stats.checked ?? 0} re-checked`,
+      stats.move_to_radar ? `${stats.move_to_radar} moved to Radar` : '',
+      stats.delete ? `${stats.delete} removed` : '',
+      stats.update ? `${stats.update} updated` : '',
+      stats.keep ? `${stats.keep} unchanged` : '',
+    ];
+    return parts.filter(Boolean).join(' · ');
+  }
+  const parts = [`${stats.new ?? 0} new emails`, `${stats.created ?? 0} added`, `${stats.updated ?? 0} updated`];
+  const classified = (stats.ai ?? 0) + (stats.fallback ?? 0);
+  if (classified) parts.push(`AI ${stats.ai ?? 0}/${classified}`);
+  if (stats.waiting) parts.push(`${stats.waiting} waiting for AI`);
+  return parts.join(' · ');
+}
+
+export function More({ data, savedAt, onSync, onRecheck, onSignOut }: {
+  data: AppState; savedAt: number | null; onSync: (days?: number) => void; onRecheck: () => void; onSignOut: () => void;
 }) {
   const { sync, setup } = data;
   const last = sync.lastRun;
   const quota = sync.quota;
+  const needsReview = data.applications.filter((a) => a.status === 'Needs Review').length;
 
   return (
     <>
@@ -245,7 +265,7 @@ export function More({ data, savedAt, onSync, onSignOut }: {
             <p className={`row-sub${last.status === 'error' ? ' danger' : ''}`}>
               {last.status === 'error'
                 ? `Failed: ${last.error ?? 'unknown error'}`
-                : last.stats ? `${last.stats.new ?? 0} new emails · ${last.stats.created ?? 0} added · ${last.stats.updated ?? 0} updated` : 'Completed'}
+                : last.stats ? runSummary(last.stats, last.trigger) : 'Completed'}
               {last.trigger ? ` · ${last.trigger}` : ''}
             </p>
           )}
@@ -262,6 +282,24 @@ export function More({ data, savedAt, onSync, onSignOut }: {
           </div>
         </div>
       </Section>
+
+      {needsReview > 0 && setup.cloudState && (
+        <Section title="Clean up">
+          <div className="card">
+            <p className="row-title">{needsReview} application{needsReview === 1 ? '' : 's'} need review</p>
+            <p className="row-sub">
+              Ask Gemini to read the original emails again: job alerts move to Radar, emails that aren&apos;t
+              about an application are removed, and the rest get the right status. Rows from older syncs
+              without a saved email link stay for you to sort by hand.
+            </p>
+            <div className="card-actions">
+              <button className="btn btn-primary" disabled={sync.running} onClick={onRecheck}>
+                <Sparkles size={16} /> Re-check with AI
+              </button>
+            </div>
+          </div>
+        </Section>
+      )}
 
       <Section title="Setup">
         <div className="card stack-tight">

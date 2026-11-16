@@ -30,7 +30,7 @@ else:
 required = [
     "google.auth", "googleapiclient", "google_auth_oauthlib",
     "dotenv", "requests", "google.genai",
-    "bs4", "lxml", "duckduckgo_search",
+    "bs4", "lxml", "ddgs",
 ]
 
 print("\nChecking imports…")

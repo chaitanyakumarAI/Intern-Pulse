@@ -1,11 +1,12 @@
 name: Scheduled Gmail Sync
 
-# The pipeline itself runs on the Render worker, where all its secrets live.
-# This job only wakes the worker every 3 hours, asks it to sync, and waits for the
+# Backup schedule (twice a day). The main schedule is supabase_cron.sql, because
+# GitHub drops many scheduled runs. The pipeline itself runs on the Render worker.
+# This job only wakes the worker, asks it to sync, and waits for the
 # result so failures show up here.
 on:
   schedule:
-    - cron: "15 */3 * * *"
+    - cron: "40 6,18 * * *"
   workflow_dispatch:
 
 concurrency:

@@ -163,6 +163,14 @@ export default function App() {
             onLeadStatus={(id, s) => guarded(() => app.updateOpportunity(id, s), s === 'dismissed' ? 'Hidden' : s === 'saved' ? 'Saved' : 'Unsaved')} />
         ) : (
           <More data={data} savedAt={app.savedAt} onSync={sync}
+            onRecheck={async () => {
+              if (!app.online) return say("You're offline", true);
+              try {
+                say(await app.startRecheck());
+              } catch (e) {
+                say((e as Error).message, true);
+              }
+            }}
             onSignOut={async () => {
               await fetch('/api/login', { method: 'DELETE' });
               clearCache();

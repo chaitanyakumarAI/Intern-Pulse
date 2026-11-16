@@ -34,14 +34,14 @@ Applying to internships means status updates scattered across company ATS emails
 | **Today** | Interviews (with date and "add to calendar"), assessments with their links, applications that need a decision, scam warnings, new job leads |
 | **Pipeline** | Every application, searchable and filterable by stage. Tap one to change its status, open the original email, read the AI prep sheet, keep notes or delete it |
 | **Radar** | Job leads from alert emails (save / hide / open) and companies with scam warnings |
-| **More** | Sync status and history, a "Deep scan" for the last 30 days, setup checks, sign-out |
+| **More** | Sync status and history (incl. how many emails Gemini handled), a "Deep scan" for the last 30 days, **Re-check with AI** for "Needs review" rows, setup checks, sign-out |
 
 It opens instantly from the last saved copy, works offline, supports pull-to-refresh, and the Android back button closes sheets and returns to *Today*.
 
 ## 🏗️ How it works
 
 ```
-        every 3 h (GitHub Actions)              "Sync" in the app / Telegram /scan
+     every 3 h (Supabase pg_cron)               "Sync" in the app / Telegram /scan
                     │                                         │
                     ▼                                         ▼
      ┌───────────────────────── Render worker (server.py) ─────────────────────────┐
@@ -125,9 +125,9 @@ Register the bot: `python scripts/set_telegram_webhook.py https://<your-app>.ver
 
 Once **More → Setup** shows *Database access: Connected with the private server key*, run [`supabase_lockdown.sql`](supabase_lockdown.sql) to close the old public table policies.
 
-### 5. Schedule (GitHub Actions)
+### 5. Schedule
 
-Add the repository secret `SYNC_API_TOKEN` (and the variable `RENDER_WORKER_URL` if yours differs). **Scheduled Gmail Sync** wakes the worker every 3 hours; the pipeline's own secrets stay on Render.
+Supabase → **SQL Editor** → paste [`supabase_cron.sql`](supabase_cron.sql) → **Run**. Supabase's `pg_cron` then calls the worker every 3 hours. (GitHub's own scheduler skips many runs on free repos, about 3 a day instead of 8, so it is only a twice-daily backup here: **Scheduled Gmail Sync**, which needs the repository secret `SYNC_API_TOKEN` if you set one on Render.) The pipeline's secrets stay on Render.
 
 ### 6. Phone
 
@@ -157,7 +157,8 @@ CI runs the Python tests and the web lint, type-check and build on every push.
 | "Sync history & job leads" warning | Run `supabase_schema.sql` |
 | Sync says the worker is unreachable | Free Render workers sleep; the first sync after a while takes about a minute |
 | `invalid_grant` from Gmail | Run `python main.py --dry-run --limit 1` locally, then update `GMAIL_TOKEN_JSON` on Render |
-| Gemini 503 "high demand" in logs | Normal: the pipeline switches to Gemini Flash Lite, then to keywords |
+| Gemini 503 "high demand" in logs | Normal: the pipeline switches to Gemini Flash Lite. If Gemini stays down, recent emails wait for the next sync instead of being stored from keyword guesses |
+| Many rows in "Needs review" | More → **Re-check with AI** (or `python scripts/recheck_needs_review.py`, add `--apply` to make the changes) |
 | Android won't install the update | APKs before v2.0 were signed with a different key: uninstall the old app once |
 | `pytest` opens an unrelated window | A personal script named `py.py` in your Python install folder shadows pytest's `py` module — rename it |
 

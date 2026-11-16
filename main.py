@@ -74,6 +74,18 @@ def _finish(run_id: str | None, status: str, stats: dict, started: float, error:
     })
 
 
+KEYWORD_RETRY_DAYS = 3
+
+
+def _is_recent(email: dict) -> bool:
+    """True if the email is younger than KEYWORD_RETRY_DAYS (or has no usable date)."""
+    try:
+        sent = datetime.fromisoformat((email.get("date_iso") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return (datetime.now(timezone.utc) - sent).days < KEYWORD_RETRY_DAYS
+
+
 def _fill_gaps(classification: dict, email: dict) -> tuple[bool, bool]:
     """
     Validate a classification and fill missing fields with the regex extractors.
@@ -85,6 +97,14 @@ def _fill_gaps(classification: dict, email: dict) -> tuple[bool, bool]:
     role = classification.get("role") or "Unknown"
     status = classification.get("status") or "Unknown"
 
+    # Gemini was unavailable for this email. Keyword guesses produced the junk "Needs Review"
+    # rows (job alerts and newsletters stored as applications), so wait for a later sync where
+    # Gemini answers. Emails older than KEYWORD_RETRY_DAYS are kept, so nothing is lost if
+    # Gemini stays down.
+    if (classification.get("method") == "keyword" and status_classifier.is_gemini_configured()
+            and _is_recent(email)):
+        return False, False
+
     if company == "Unknown":
         company = status_classifier._extract_company(sender, subject, body)
         classification["company"] = company
@@ -94,9 +114,7 @@ def _fill_gaps(classification: dict, email: dict) -> tuple[bool, bool]:
         status = "Needs Review"
         classification["status"] = status
 
-    keep = company != "Unknown" and status != "Unknown"
-    retry_later = classification.get("method") == "keyword" and status_classifier.is_gemini_configured()
-    return keep, keep or not retry_later
+    return company != "Unknown" and status != "Unknown", True
 
 
 def _handle_opportunity(email: dict, classification: dict) -> None:
@@ -127,7 +145,14 @@ def _process_email(email: dict, stats: dict, handled: list, outcomes: Counter, d
         return
 
     classification = status_classifier.classify_email_ai(email)
+    method = classification.get("method")
+    if method in ("gemini", "skipped") and status_classifier.is_gemini_configured() and not status_classifier._gemini_failed:
+        stats["ai"] += 1
+    elif method == "keyword":
+        stats["fallback"] += 1
     keep, resolved = _fill_gaps(classification, email)
+    if not resolved:
+        stats["waiting"] += 1  # retried on a later sync, when Gemini answers
     outcomes[f"{classification.get('method', '?')}: {classification.get('status')}"] += 1
 
     if not keep:
@@ -190,7 +215,8 @@ def run_once(days: str | None = None, force: bool = False, dry_run: bool = False
     if effective_days and effective_days.lower() != "all":
         query = f"{config._base_query} newer_than:{effective_days}d"
 
-    stats = {"fetched": 0, "new": 0, "processed": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0}
+    stats = {"fetched": 0, "new": 0, "processed": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0,
+             "ai": 0, "fallback": 0, "waiting": 0}
     run_id = None
     if not dry_run:
         run_id = cloud_state.start_run(trigger, effective_days) if cloud_state.available() else None

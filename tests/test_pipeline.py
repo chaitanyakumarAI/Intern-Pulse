@@ -1,4 +1,6 @@
 """main.run_once end to end with fake Gmail, classifier, research and Telegram."""
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 import company_researcher
@@ -10,6 +12,10 @@ import main
 import status_classifier
 import sync_quota
 import telegram_notifier
+
+
+def days_ago(n: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def make_email(msg_id, subject, date_iso, sender="Acme Careers <careers@acmeanalytics.example>"):
@@ -64,7 +70,7 @@ def test_emails_are_processed_oldest_first(pipeline):
 
 def test_unresolved_keyword_email_is_retried_when_gemini_configured(pipeline, monkeypatch):
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
-    pipeline["emails"] = [make_email("1", "Your application update", "2026-10-01T09:00:00.000Z",
+    pipeline["emails"] = [make_email("1", "Your application update", days_ago(0),
                                      sender="noreply@internshala.com")]
     pipeline["by_subject"] = {"Your application update": classification("Interview Scheduled", company="Unknown", method="keyword")}
     main.run_once(force=True)
@@ -144,3 +150,33 @@ def test_job_digest_alerts_once_and_is_not_stored_as_application(pipeline):
     main.run_once(force=True)
     assert pipeline["alerts"] == [("opportunity", "Job Opportunity")]
     assert db.get_all_applications() == []
+
+
+def test_keyword_guess_waits_for_gemini_while_email_is_recent(pipeline, monkeypatch):
+    # Regression: job alerts classified by keywords during a Gemini outage were stored
+    # as "Needs Review" applications with junk company names.
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    pipeline["emails"] = [make_email("1", "Backend Engineer at Acme and 5 more", days_ago(1), sender="jobalerts-noreply@linkedin.com")]
+    pipeline["by_subject"] = {"Backend Engineer at Acme and 5 more": classification("Unknown", company="Backend Engineer", method="keyword")}
+    main.run_once(force=True)
+    assert db.get_all_applications() == []
+    assert "1" not in email_history.get_processed_ids()
+
+
+def test_keyword_result_is_kept_once_email_is_old(pipeline, monkeypatch):
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    pipeline["emails"] = [make_email("1", "Your application update", days_ago(main.KEYWORD_RETRY_DAYS + 1))]
+    pipeline["by_subject"] = {"Your application update": classification("Unknown", company="Acme Analytics", method="keyword")}
+    main.run_once(force=True)
+    rows = db.get_all_applications()
+    assert len(rows) == 1 and rows[0]["status"] == "Needs Review"
+    assert "1" in email_history.get_processed_ids()
+
+
+def test_keyword_tier_recognises_linkedin_job_alerts():
+    result = status_classifier._keyword_classify({
+        "subject": "Data Scientist at Globex and 7 more",
+        "body": "Jobs similar to your search",
+        "sender": "LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+    })
+    assert result["status"] == "Job Opportunity"

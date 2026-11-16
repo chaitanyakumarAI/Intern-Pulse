@@ -57,3 +57,10 @@ def test_non_numeric_confidence_is_treated_as_zero():
 def test_keyword_tier_tags_its_results():
     result = sc._keyword_classify({"subject": "Thank you for applying", "body": "", "sender": "hr@acme.example"})
     assert result["method"] == "keyword"
+
+
+def test_interview_date_must_be_a_real_timestamp():
+    assert sc._parse_llm_response(_llm(interview_date="2026-11-25T15:00:00+05:30"))["interview_date"] == "2026-11-25T15:00:00+05:30"
+    assert sc._parse_llm_response(_llm(interview_date="2026-11-25T09:30:00Z"))["interview_date"] == "2026-11-25T09:30:00+00:00"
+    assert sc._parse_llm_response(_llm(interview_date="next Tuesday at 3pm"))["interview_date"] is None
+    assert sc._parse_llm_response(_llm(interview_date=None))["interview_date"] is None

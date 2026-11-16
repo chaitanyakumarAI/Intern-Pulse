@@ -11,6 +11,8 @@ Endpoints:
                                   ?days=N   only emails from the last N days
                                   ?force=true  bypass the daily limit (token required)
                                   ?trigger=app|schedule|telegram  recorded with the run
+  POST /api/recheck            -> re-check "Needs Review" rows with Gemini in the background (202)
+                                  ?apply=false  preview only (default: apply)
 
 If SYNC_API_TOKEN is set, /api/sync requires "Authorization: Bearer <token>".
 """
@@ -96,6 +98,34 @@ def _run_worker_sync(force: bool = False, days: str | None = None, trigger: str 
         _sync_lock.release()
 
 
+def _run_worker_recheck(apply: bool = True) -> dict:
+    """Re-check "Needs Review" rows (background thread); recorded as a run with trigger 'recheck'."""
+    global _last_sync_status, _last_sync_stats
+    if not _sync_lock.acquire(blocking=False):
+        return {"status": "already_running"}
+    run_id = None
+    try:
+        _last_sync_status = "running"
+        import recheck
+        if cloud_state.available():
+            run_id = cloud_state.start_run("recheck", None)
+        result = recheck.recheck_needs_review(apply=apply)
+        stats = {"checked": result["checked"], **{k: v for k, v in result["counts"].items()}}
+        _last_sync_stats = stats
+        _last_sync_status = "success"
+        if run_id:
+            cloud_state.finish_run(run_id, "success", stats)
+        return {"status": "success", **result}
+    except Exception as exc:
+        _last_sync_status = f"failed: {exc}"
+        logger.error("Re-check failed: %s", exc, exc_info=True)
+        if run_id:
+            cloud_state.finish_run(run_id, "error", None, str(exc))
+        return {"status": "error", "error": str(exc)}
+    finally:
+        _sync_lock.release()
+
+
 class HealthAndSyncHandler(BaseHTTPRequestHandler):
     def _send_json(self, status_code: int, data: dict):
         payload = json.dumps(data, indent=2).encode("utf-8")
@@ -122,6 +152,14 @@ class HealthAndSyncHandler(BaseHTTPRequestHandler):
         threading.Thread(target=_run_worker_sync, args=(force, days, trigger), daemon=True).start()
         self._send_json(202, {"status": "accepted", "message": "Sync started in the background.", "force": force})
 
+    def _start_recheck(self, parsed):
+        if SYNC_API_TOKEN and _token_status(self.headers) != "valid":
+            self._send_json(401, {"error": "Unauthorized"})
+            return
+        apply = parse_qs(parsed.query).get("apply", ["true"])[0].lower() not in ("false", "0", "no")
+        threading.Thread(target=_run_worker_recheck, args=(apply,), daemon=True).start()
+        self._send_json(202, {"status": "accepted", "message": "Re-check started in the background.", "apply": apply})
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
@@ -145,8 +183,11 @@ class HealthAndSyncHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if (parsed.path.rstrip("/") or "/") == "/api/sync":
+        path = parsed.path.rstrip("/") or "/"
+        if path == "/api/sync":
             self._start_sync(parsed)
+        elif path == "/api/recheck":
+            self._start_recheck(parsed)
         else:
             self._send_json(404, {"error": "Not Found"})
 

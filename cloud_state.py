@@ -127,8 +127,9 @@ def finish_run(run_id: str, status: str, stats: Optional[dict] = None, error: Op
 
 
 def runs_today() -> int:
-    """Syncs that count against the daily limit: failed runs don't."""
-    resp = db_manager.rest("GET", f"sync_runs?select=id&status=in.(running,success)&started_at=gte.{_today_start()}")
+    """Syncs that count against the daily limit: failed runs and re-checks don't."""
+    resp = db_manager.rest("GET", f"sync_runs?select=id&status=in.(running,success)&trigger=neq.recheck"
+                                  f"&started_at=gte.{_today_start()}")
     return len(resp.json()) if _ok(resp) else 0
 
 

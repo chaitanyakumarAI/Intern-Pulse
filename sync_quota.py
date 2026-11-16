@@ -24,7 +24,7 @@ def _get_today_str() -> str:
 
 def get_daily_limit() -> int:
     """Read configured daily sync limit from config or env."""
-    return getattr(config, "DAILY_SYNC_LIMIT", 12)
+    return getattr(config, "DAILY_SYNC_LIMIT", 20)
 
 
 def get_quota(daily_limit: int | None = None) -> dict:

@@ -106,7 +106,7 @@ if _token_json:
 
 # ── Daily Sync Limit & Quota ────────────────────────────────────────────────
 # Each sync only spends API calls on new emails, so this is a safety net, not a budget.
-DAILY_SYNC_LIMIT: int = int(os.getenv("DAILY_SYNC_LIMIT", "12"))
+DAILY_SYNC_LIMIT: int = int(os.getenv("DAILY_SYNC_LIMIT", "20"))
 
 # ── Data dir ─────────────────────────────────────────────────────────────────
 DATA_DIR: Path = ROOT_DIR / "data"
