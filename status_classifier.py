@@ -125,7 +125,9 @@ def _init_gemini_clients():
         from google import genai
         for idx, key in enumerate(keys):
             try:
-                client = genai.Client(api_key=key, http_options={"timeout": GEMINI_TIMEOUT_MS})
+                # v1beta explicitly: newer SDKs default to v1, where the "-latest" model
+                # aliases and response schemas aren't available (404 on Render).
+                client = genai.Client(api_key=key, http_options={"timeout": GEMINI_TIMEOUT_MS, "api_version": "v1beta"})
                 _gemini_clients.append(client)
             except Exception as exc:
                 global LAST_ERROR
@@ -301,6 +303,11 @@ def _call_gemini_with_retries(prompt: str, schema: Optional[dict] = None) -> Opt
             kind = _gemini_error_kind(exc)
             global LAST_ERROR
             LAST_ERROR = f"{kind}: " + re.sub(r"AIza[0-9A-Za-z_\-]{10,}", "<key>", str(exc))[:200]
+            if kind == "fatal" and getattr(exc, "code", None) == 404 and GEMINI_FALLBACK_MODEL and model != GEMINI_FALLBACK_MODEL:
+                # Model not found on this API: try the other model before giving up on Gemini.
+                logger.warning("%s not found (%s); trying %s.", model, exc, GEMINI_FALLBACK_MODEL)
+                model = GEMINI_FALLBACK_MODEL
+                continue
             if kind == "fatal":
                 _gemini_failed = True
                 logger.error("Gemini configuration error (%s); disabling Gemini for this run.", exc)

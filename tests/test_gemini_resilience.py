@@ -133,3 +133,27 @@ def test_overloaded_model_falls_back_to_lighter_model(gemini, job_email, monkeyp
     (client,) = gemini([server_error(), GOOD_REPLY])
     assert sc.classify_email_ai(job_email)["method"] == "gemini"
     assert client.models_used == [sc.GEMINI_MODEL, "gemini-flash-lite-latest"]
+
+
+def test_model_not_found_tries_fallback_model_before_giving_up(gemini, job_email, monkeypatch):
+    # Regression: SDK 3.x on Render hit the v1 API, where "-latest" models 404, and Gemini
+    # was disabled for every run.
+    monkeypatch.setattr(sc, "GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
+    (client,) = gemini([_api_error(genai_errors.ClientError, 404, "NOT_FOUND", "model not found"), GOOD_REPLY])
+    assert sc.classify_email_ai(job_email)["method"] == "gemini"
+    assert sc._gemini_failed is False
+
+
+def test_clients_request_the_v1beta_api(monkeypatch):
+    seen = {}
+
+    class Client:
+        def __init__(self, api_key, http_options):
+            seen.update(http_options)
+
+    import google.genai
+    monkeypatch.setattr(google.genai, "Client", Client)
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(sc, "_gemini_clients", [])
+    sc._init_gemini_clients()
+    assert seen["api_version"] == "v1beta" and seen["timeout"] == sc.GEMINI_TIMEOUT_MS
