@@ -40,6 +40,7 @@ _sleep = time.sleep                  # indirection so tests can skip real waitin
 # ── Session-level flags ───────────────────────────────────────────────────────
 _gemini_failed         = False
 _consecutive_failures  = 0
+LAST_ERROR: Optional[str] = None     # last Gemini failure (kind + message, keys redacted), for /health
 
 def reset_gemini_session() -> None:
     """Reset session failure state so subsequent runs or scans can retry Gemini."""
@@ -127,6 +128,8 @@ def _init_gemini_clients():
                 client = genai.Client(api_key=key, http_options={"timeout": GEMINI_TIMEOUT_MS})
                 _gemini_clients.append(client)
             except Exception as exc:
+                global LAST_ERROR
+                LAST_ERROR = f"client init: {type(exc).__name__}"
                 logger.warning("Failed to initialize Gemini client for key #%d: %s", idx + 1, exc)
                 
         if _gemini_clients:
@@ -296,6 +299,8 @@ def _call_gemini_with_retries(prompt: str, schema: Optional[dict] = None) -> Opt
             return raw
         except Exception as exc:
             kind = _gemini_error_kind(exc)
+            global LAST_ERROR
+            LAST_ERROR = f"{kind}: " + re.sub(r"AIza[0-9A-Za-z_\-]{10,}", "<key>", str(exc))[:200]
             if kind == "fatal":
                 _gemini_failed = True
                 logger.error("Gemini configuration error (%s); disabling Gemini for this run.", exc)

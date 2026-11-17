@@ -17,6 +17,7 @@ Endpoints:
 If SYNC_API_TOKEN is set, /api/sync requires "Authorization: Bearer <token>".
 """
 import hmac
+from collections import Counter
 import json
 import os
 import threading
@@ -38,6 +39,12 @@ _sync_lock = threading.Lock()
 _last_sync_time = None
 _last_sync_status = "idle"
 _last_sync_stats = None
+_last_recheck_reasons = None   # counts only: the health page is public, so no company names
+
+
+def _gemini_last_error():
+    import status_classifier
+    return status_classifier.LAST_ERROR
 
 
 def _token_status(headers) -> str:
@@ -110,6 +117,8 @@ def _run_worker_recheck(apply: bool = True) -> dict:
         if cloud_state.available():
             run_id = cloud_state.start_run("recheck", None)
         result = recheck.recheck_needs_review(apply=apply)
+        global _last_recheck_reasons
+        _last_recheck_reasons = dict(Counter(f"{i['action']}: {i['reason']}" for i in result["items"]))
         stats = {"checked": result["checked"], **{k: v for k, v in result["counts"].items()}}
         _last_sync_stats = stats
         _last_sync_status = "success"
@@ -173,6 +182,8 @@ class HealthAndSyncHandler(BaseHTTPRequestHandler):
                 "stats": _last_sync_stats,
                 "quota": get_quota(),
                 "configured": _configured(),
+                "gemini_last_error": _gemini_last_error(),
+                "last_recheck_reasons": _last_recheck_reasons,
             })
         elif path == "/api/quota":
             self._send_json(200, get_quota())
